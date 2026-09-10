@@ -77,8 +77,10 @@ cat /etc/x-ui/install-result.env
 systemctl is-active x-ui                    # active
 /usr/local/x-ui/x-ui -v                     # версия
 /usr/local/x-ui/x-ui setting -show          # hasDefaultCredential: false
-PORT=$(grep XUI_PANEL_PORT /etc/x-ui/install-result.env | cut -d= -f2)
-curl -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:${PORT}/"
+
+. /etc/x-ui/install-result.env
+curl -o /dev/null -w '%{http_code}\n' \
+  "http://127.0.0.1:${XUI_PANEL_PORT}/${XUI_WEB_BASE_PATH}/"   # 200 или 30x
 ```
 
 Зайдите в панель, заведите AmneziaWG-инбаунд и клиента, подключитесь и **снимите
@@ -91,6 +93,12 @@ curl -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:${PORT}/"
 Кросс-сборка с Windows не поддерживается: драйвер SQLite (`mattn/go-sqlite3`)
 требует cgo и компилятора под целевую платформу. Собирайте на Linux — проще
 всего прямо на целевом сервере.
+
+> **Откуда брать код.** Ветка `feat/awg-kernel-backend-v2` собрана поверх
+> актуального `main` и лежит локально. Чтобы клонировать её на сервер, её надо
+> сначала запушить в форк (`git push fork feat/awg-kernel-backend-v2`). Если
+> публиковать ветку не хочется — пропустите §4.1–4.2 и скопируйте на сервер
+> готовый бинарь (`scp`), затем переходите к §4.3.
 
 ### 4.1 Инструменты
 
@@ -403,8 +411,13 @@ print("written %s: %d peers, port %d, mtu %d" %
 PY
 
 awg-quick up awg0
-systemctl enable awg-quick@awg0
+
+# Автозапуск, если amneziawg-tools поставили systemd-юнит:
+systemctl list-unit-files 'awg-quick@*' && systemctl enable awg-quick@awg0
 ```
+
+Если юнита `awg-quick@.service` нет (его установка зависит от того, как собраны
+tools), заведите свой или поднимайте интерфейс из `/etc/rc.local`.
 
 Ограничения тут шире, чем в §6: панель не увидит ни трафик, ни онлайн-статус
 таких пиров и **не будет пересобирать конфиг при правке клиентов**. После
