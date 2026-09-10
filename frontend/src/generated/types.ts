@@ -868,6 +868,7 @@ export interface ServerSettings {
   jmax: number;
   jmin: number;
   keepaliveTimeout?: string;
+  kernelMode?: boolean;
   maxHandshakeAttempts?: string;
   mtu?: number;
   primaryDns: string;

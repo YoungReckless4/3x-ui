@@ -265,6 +265,12 @@ export const sections: readonly Section[] = [
       },
       {
         method: 'GET',
+        path: '/panel/api/inbounds/amneziawgKernelReadiness',
+        summary:
+          'Whether this host can run an AmneziaWG inbound on the kernel module: root, the amneziawg module, amneziawg-tools and nftables. Returns ready plus a blockers list carrying a machine code (root/tools/module/nft/ipv6/portForwarding/routeThroughXray) so the UI can translate it, and the command that fixes them. The inbound form uses it to disable the kernel-mode toggle instead of letting a save fail.',
+      },
+      {
+        method: 'GET',
         path: '/panel/api/inbounds/allLinks',
         responseObjectSchema: { type: 'array', nullable: true, items: { type: 'string' } },
         summary:

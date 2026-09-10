@@ -2,16 +2,22 @@ package job
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/mhsanaei/3x-ui/v3/internal/amneziawg"
+	"github.com/mhsanaei/3x-ui/v3/internal/amneziawgkern"
 	"github.com/mhsanaei/3x-ui/v3/internal/amneziawgnet"
 	"github.com/mhsanaei/3x-ui/v3/internal/logger"
 	"github.com/mhsanaei/3x-ui/v3/internal/web/service"
 	"github.com/mhsanaei/3x-ui/v3/internal/xray"
 )
 
-// AmneziaWGJob converges embedded AmneziaWG interfaces (inbounds AND the
-// template's "amneziawg" outbounds) every 10s; stats stay with Xray.
+// endpointWindow is how long a kernel-mode peer's connect location stays
+// counted toward its IP limit -- Xray's access log never sees these peers.
+const endpointWindow = 30 * time.Minute
+
+// AmneziaWGJob converges AmneziaWG interfaces (inbounds on either datapath AND
+// the template's "amneziawg" outbounds) every 10s; only kernel mode needs stats.
 type AmneziaWGJob struct {
 	inboundService service.InboundService
 	settingService service.SettingService
@@ -30,9 +36,18 @@ func (j *AmneziaWGJob) Run() {
 		return
 	}
 
-	wanted := make([]amneziawgnet.Desired, 0, len(desired))
+	embedded := make([]amneziawgnet.Desired, 0, len(desired))
+	kernel := make([]amneziawgkern.Desired, 0, len(desired))
 	for _, inst := range desired {
-		wanted = append(wanted, amneziawgnet.Desired{
+		if inst.KernelMode {
+			kernel = append(kernel, amneziawgkern.Desired{
+				Instance:         inst,
+				EgressInterface:  inst.ExternalInterface,
+				RouteThroughXray: inst.RouteThroughXray,
+			})
+			continue
+		}
+		embedded = append(embedded, amneziawgnet.Desired{
 			Instance: inst,
 			Options: amneziawgnet.DeviceOptions{
 				HeaderProtectionKey:    inst.Obfuscation.HeaderProtectionKey,
@@ -47,7 +62,9 @@ func (j *AmneziaWGJob) Run() {
 			},
 		})
 	}
-	amneziawgnet.GetManager().Reconcile(wanted)
+	amneziawgnet.GetManager().Reconcile(embedded)
+	amneziawgkern.GetManager().Reconcile(kernel)
+	j.collectKernelTraffic(kernel)
 
 	outboundDesired, err := j.desiredOutboundInstances()
 	if err != nil {
@@ -108,4 +125,61 @@ func (j *AmneziaWGJob) desiredOutboundInstances() ([]amneziawgnet.OutboundDesire
 		})
 	}
 	return out, nil
+}
+
+// collectKernelTraffic feeds each kernel interface's per-peer counter
+// increments into the same accounting the rest of the panel uses.
+func (j *AmneziaWGJob) collectKernelTraffic(kernel []amneziawgkern.Desired) {
+	if len(kernel) == 0 {
+		return
+	}
+
+	collector := amneziawgkern.GetCollector()
+	manager := amneziawgkern.GetManager()
+	now := time.Now()
+
+	var traffics []*xray.ClientTraffic
+	for _, d := range kernel {
+		iface, ok := manager.InterfaceNameFor(d.Instance.Id)
+		if !ok {
+			continue
+		}
+		stats, err := amneziawgkern.Dump(iface)
+		if err != nil {
+			logger.Warning("amneziawg job: reading counters for ", iface, ": ", err)
+			continue
+		}
+
+		emails := make(map[string]string, len(d.Instance.Peers))
+		for _, p := range d.Instance.Peers {
+			emails[p.PublicKey] = p.Email
+		}
+		collector.SetEmails(iface, emails)
+		collector.ObserveEndpoints(iface, stats, now, endpointWindow)
+		collector.ObserveHandshakes(iface, stats)
+
+		// Deltas, never totals: kernel counters restart at zero on every
+		// interface rebuild, and AddTraffic adds whatever it is given.
+		for _, delta := range collector.Delta(iface, stats) {
+			email := emails[delta.PublicKey]
+			if email == "" {
+				continue
+			}
+			traffics = append(traffics, &xray.ClientTraffic{
+				InboundId: d.Instance.Id,
+				Email:     email,
+				Up:        delta.Up,
+				Down:      delta.Down,
+			})
+		}
+	}
+
+	if len(traffics) == 0 {
+		return
+	}
+	// A client that just crossed its limit is disabled here; the next reconcile
+	// tick drops its peer from the interface, which is what cuts it off.
+	if _, _, err := j.inboundService.AddTraffic(nil, traffics); err != nil {
+		logger.Warning("amneziawg job: recording kernel-mode traffic:", err)
+	}
 }

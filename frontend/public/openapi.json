@@ -3838,6 +3838,10 @@
           "keepaliveTimeout": {
             "type": "string"
           },
+          "kernelMode": {
+            "description": "KernelMode runs this inbound on the DKMS kernel module and awg-quick\n(internal/amneziawgkern) instead of the embedded amneziawg-go + gVisor stack.",
+            "type": "boolean"
+          },
           "maxHandshakeAttempts": {
             "type": "string"
           },
@@ -4540,6 +4544,36 @@
                       "wgPublicKey": ""
                     }
                   ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/panel/api/inbounds/amneziawgKernelReadiness": {
+      "get": {
+        "tags": [
+          "Inbounds"
+        ],
+        "summary": "Whether this host can run an AmneziaWG inbound on the kernel module: root, the amneziawg module, amneziawg-tools and nftables. Returns ready plus a blockers list carrying a machine code (root/tools/module/nft/ipv6/portForwarding/routeThroughXray) so the UI can translate it, and the command that fixes them. The inbound form uses it to disable the kernel-mode toggle instead of letting a save fail.",
+        "operationId": "get_panel_api_inbounds_amneziawgKernelReadiness",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "msg": {
+                      "type": "string"
+                    },
+                    "obj": {}
+                  }
                 }
               }
             }

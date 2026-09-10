@@ -282,7 +282,12 @@ func checkAmneziawgnetSocksConflict(db *gorm.DB, inbound *model.Inbound, ignoreI
 		return nil, err
 	}
 	for _, c := range candidates {
-		if _, ok := amneziawg.InstanceFromInbound(c); !ok {
+		inst, ok := amneziawg.InstanceFromInbound(c)
+		if !ok {
+			continue
+		}
+		// Kernel mode has no relay inbound, so its derived port is free.
+		if inst.KernelMode {
 			continue
 		}
 		if amneziawgnet.SOCKSPortForInbound(c.Id) != inbound.Port {

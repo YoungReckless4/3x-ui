@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/mhsanaei/3x-ui/v3/internal/amneziawg"
+	"github.com/mhsanaei/3x-ui/v3/internal/amneziawgkern"
 	"github.com/mhsanaei/3x-ui/v3/internal/amneziawgnet"
 	"github.com/mhsanaei/3x-ui/v3/internal/database"
 	"github.com/mhsanaei/3x-ui/v3/internal/database/model"
@@ -310,6 +311,14 @@ func (s *InboundService) normalizeAmneziaWGSettings(inbound *model.Inbound, oldS
 		return err
 	}
 	inbound.Settings = string(bs)
+
+	// Refuse a kernel-mode save this host cannot honour while the admin is still
+	// in front of the form; the reconcile job could only log and retry.
+	if inst, ok := amneziawg.InstanceFromInbound(inbound); ok && inst.KernelMode {
+		if err := amneziawgkern.Preflight(inst, inst.RouteThroughXray); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

@@ -951,6 +951,7 @@ export const EXAMPLES: Record<string, unknown> = {
     "jmax": 0,
     "jmin": 0,
     "keepaliveTimeout": "",
+    "kernelMode": false,
     "maxHandshakeAttempts": "",
     "mtu": 0,
     "primaryDns": "",

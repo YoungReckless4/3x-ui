@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mhsanaei/3x-ui/v3/internal/amneziawgkern"
 	"github.com/mhsanaei/3x-ui/v3/internal/amneziawgnet"
 	"github.com/mhsanaei/3x-ui/v3/internal/config"
 	"github.com/mhsanaei/3x-ui/v3/internal/eventbus"
@@ -699,6 +700,7 @@ func (s *Server) stop(stopXray bool, stopTgBot bool) error {
 		_ = s.xrayService.StopXray()
 		mtproto.GetManager().StopAll()
 		amneziawgnet.GetManager().StopAll()
+		amneziawgkern.GetManager().StopAll()
 		amneziawgnet.GetOutboundManager().StopAll()
 	}
 	if s.cron != nil {

@@ -1204,7 +1204,15 @@ func (s *InboundService) AddInbound(inbound *model.Inbound) (*model.Inbound, boo
 		}
 		// The relay port is derived from the id, only known after Save; checkPortConflictTx
 		// ran the reverse-direction check above with ignoreId==0, so it couldn't yet.
+		kernelMode := false
 		if inbound.Protocol == model.AmneziaWG {
+			if inst, ok := amneziawg.InstanceFromInbound(inbound); ok {
+				kernelMode = inst.KernelMode
+			}
+		}
+		// The relay port only exists for the embedded datapath; kernel mode
+		// neither derives nor reserves one.
+		if inbound.Protocol == model.AmneziaWG && !kernelMode {
 			if amneziawgnet.SOCKSPortForInbound(inbound.Id) > 65535 {
 				return common.NewErrorf("amneziawg: inbound id %d exceeds the relay port window (ids above %d are not supported)",
 					inbound.Id, 65535-amneziawgnet.SOCKSBasePort)
