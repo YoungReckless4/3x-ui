@@ -100,8 +100,8 @@ question it already answers.
   subtests and `t.Helper()` on helpers. An assertion must pin the exact value,
   typed error or emitted string — `err != nil` and `len(x) > 0` are findings,
   not nits. Prefer real dependencies: a throwaway DB via
-  `database.InitDB(filepath.Join(t.TempDir(), "x-ui.db"))` with `t.Cleanup`, and
-  `httptest` for HTTP. `internal/sub`'s `initSubDB(t)` is the template.
+  `dbtest.InitDB(t, filepath.Join(t.TempDir(), "x-ui.db"))`
+  (`internal/database/dbtest`), and `httptest` for HTTP. `internal/sub`'s `initSubDB(t)` is the template.
   A test must FAIL without its fix; one that passes either way certifies
   nothing and then gets cited as proof the fix works.
 
@@ -152,7 +152,7 @@ It is paths-filtered, so a docs-only or workflow-only change produces no run.
 | `golangci` | `golangci-lint` |
 | `fuzz-smoke` | 30s each on `FuzzParseLink` and `FuzzDecodeCertPin` |
 | `codegen` | `npm run gen` then `git diff --exit-code` on the generated files |
-| `frontend` | MSW worker drift, lint, format:check, typecheck, `npm test` (Vitest + headless-Chromium Storybook), build, build-storybook, `npm audit` |
+| `frontend` | lint, format:check, typecheck, `npm test` (Vitest + headless-Chromium Storybook), build, build-storybook, `npm audit` |
 
 **What CI does NOT prove.** These test families `t.Skip` unless an environment
 variable is set, and CI sets only the PostgreSQL ones above:

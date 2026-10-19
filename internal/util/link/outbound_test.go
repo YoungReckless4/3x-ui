@@ -2,6 +2,7 @@ package link
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"net/url"
 	"strings"
 	"testing"
@@ -20,6 +21,17 @@ func TestParseVmessLink(t *testing.T) {
 	}
 	if res.Outbound["tag"] != "test" {
 		t.Errorf("expected tag 'test', got %v", res.Outbound["tag"])
+	}
+}
+
+func TestLinkIdentityKeepsTLSServerName(t *testing.T) {
+	a, errA := ParseLink("vless://uuid@1.2.3.4:443?type=ws&security=tls&sni=a.example.com#node")
+	b, errB := ParseLink("vless://uuid@1.2.3.4:443?type=ws&security=tls&sni=b.example.com#node")
+	if errA != nil || errB != nil {
+		t.Fatalf("parse vless: %v, %v", errA, errB)
+	}
+	if a.Identity == b.Identity {
+		t.Fatalf("TLS links for different SNIs share identity %q", a.Identity)
 	}
 }
 
@@ -72,6 +84,25 @@ func TestParseVlessLink_FinalMaskQuicParamsSanitized(t *testing.T) {
 	}
 	if got := qp["brutalUp"]; got != "100 mbps" {
 		t.Errorf("brutalUp should stay a string, got %v (%T)", got, got)
+	}
+}
+
+// A panel on xray-core 26.9.30 shares xdns objects whose "name" and typed resolvers
+// 26.10.10 ignores; imported verbatim, the outbound would dial with no domain.
+func TestParseLink_UpgradesLegacyXdnsFinalMask(t *testing.T) {
+	fm := url.QueryEscape(`{"udp":[{"type":"xdns","settings":{"domains":[{"name":"t.example.com","types":[16],"edns0":1232}],"resolvers":[{"type":"udp","settings":{"addr":"8.8.8.8:53"}}]}}]}`)
+	res, err := ParseLink("vless://uuid@1.2.3.4:53?type=kcp&security=none&fm=" + fm + "#dns")
+	if err != nil {
+		t.Fatalf("parse vless with fm: %v", err)
+	}
+	stream, _ := res.Outbound["streamSettings"].(map[string]any)
+	got, err := json.Marshal(stream["finalmask"])
+	if err != nil {
+		t.Fatalf("marshal finalmask: %v", err)
+	}
+	want := `{"udp":[{"settings":{"domains":[{"edns0":1232,"names":["t.example.com"],"types":[16]}],"resolvers":[{"addrs":["udp://8.8.8.8:53"]}]},"type":"xdns"}]}`
+	if string(got) != want {
+		t.Fatalf("imported finalmask\n got: %s\nwant: %s", got, want)
 	}
 }
 
@@ -273,9 +304,9 @@ func TestParseHysteria2_Mport(t *testing.T) {
 			wantHop:   true,
 		},
 		{
-			name:      "legacy fm quicParams.udpHop no longer suppresses mport",
+			name:      "legacy fm quicParams.udpHop is upgraded and wins over mport like the mask",
 			query:     "mport=1-2&fm=" + url.QueryEscape(`{"quicParams":{"udpHop":{"ports":"30000-40000","interval":"7-9"}}}`),
-			wantPorts: "1-2",
+			wantPorts: "30000-40000",
 			wantHop:   true,
 		},
 	}
@@ -416,6 +447,46 @@ func TestParseShadowsocks(t *testing.T) {
 	}
 }
 
+func TestParseShadowsocksTLSQueryRoundTrip(t *testing.T) {
+	user := base64.RawURLEncoding.EncodeToString([]byte("chacha20-ietf-poly1305:secretpass"))
+	link := "ss://" + user + "@example.com:443?alpn=h2%2Chttp%2F1.1&fp=firefox&security=tls&sni=example.com&type=tcp#user"
+	res, err := ParseLink(link)
+	if err != nil {
+		t.Fatalf("parse ss tls: %v", err)
+	}
+	srv := res.Outbound["settings"].(map[string]any)["servers"].([]any)[0].(map[string]any)
+	if srv["address"] != "example.com" || srv["port"] != 443 {
+		t.Fatalf("server = %v", srv)
+	}
+	if srv["method"] != "chacha20-ietf-poly1305" || srv["password"] != "secretpass" {
+		t.Fatalf("creds = %v", srv)
+	}
+	stream, ok := res.Outbound["streamSettings"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing streamSettings: %v", res.Outbound)
+	}
+	if stream["network"] != "tcp" {
+		t.Errorf("network = %v, want tcp", stream["network"])
+	}
+	if stream["security"] != "tls" {
+		t.Errorf("security = %v, want tls", stream["security"])
+	}
+	tls, ok := stream["tlsSettings"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing tlsSettings: %v", stream)
+	}
+	if tls["serverName"] != "example.com" {
+		t.Errorf("sni = %v, want example.com", tls["serverName"])
+	}
+	if tls["fingerprint"] != "firefox" {
+		t.Errorf("fp = %v, want firefox", tls["fingerprint"])
+	}
+	alpn, _ := tls["alpn"].([]string)
+	if len(alpn) != 2 || alpn[0] != "h2" || alpn[1] != "http/1.1" {
+		t.Errorf("alpn = %v, want [h2 http/1.1]", alpn)
+	}
+}
+
 func TestParseShadowsocksBadPort(t *testing.T) {
 	user := base64.StdEncoding.EncodeToString([]byte("aes-256-gcm:secretpass"))
 	cases := map[string]string{
@@ -461,5 +532,83 @@ func TestSlugAndSuggest(t *testing.T) {
 	}
 	if got := SuggestTag("ru-", "Сервер 2", 0); got != "ru-сервер-2" {
 		t.Errorf("unicode suggest tag got %q", got)
+	}
+}
+
+// The obfs-local plugin the panel exports carries the only description of
+// shadowsocks tcp/http obfuscation, so it has to become that header.
+func TestParseShadowsocksObfsLocalPlugin(t *testing.T) {
+	user := base64.RawURLEncoding.EncodeToString([]byte("aes-256-gcm:secretpass"))
+	const httpObfs = "obfs-local;obfs=http;obfs-host=obfs.example.com"
+	for _, tc := range []struct {
+		name, query, wantHeader, wantHost string
+	}{
+		{"http obfs becomes the tcp header", "plugin=" + url.QueryEscape(httpObfs), "http", "obfs.example.com"},
+		{"unencoded separators map the same way", "plugin=" + httpObfs, "http", "obfs.example.com"},
+		{"tls obfs has no xray header", "plugin=" + url.QueryEscape("obfs-local;obfs=tls"), "none", ""},
+		{"an unrelated plugin is left alone", "plugin=v2ray-plugin", "none", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := ParseLink("ss://" + user + "@1.2.3.4:8388/?" + tc.query + "#node")
+			if err != nil {
+				t.Fatalf("parse ss: %v", err)
+			}
+			raw, err := json.Marshal(res.Outbound["streamSettings"])
+			if err != nil {
+				t.Fatalf("marshal stream: %v", err)
+			}
+			var stream map[string]any
+			_ = json.Unmarshal(raw, &stream)
+			tcp, _ := stream["tcpSettings"].(map[string]any)
+			header, _ := tcp["header"].(map[string]any)
+			if header == nil || header["type"] != tc.wantHeader {
+				t.Fatalf("header = %v, want type %q", header, tc.wantHeader)
+			}
+			request, _ := header["request"].(map[string]any)
+			headers, _ := request["headers"].(map[string]any)
+			hosts, _ := headers["Host"].([]any)
+			got := ""
+			if len(hosts) > 0 {
+				got, _ = hosts[0].(string)
+			}
+			if got != tc.wantHost {
+				t.Errorf("host = %q, want %q", got, tc.wantHost)
+			}
+		})
+	}
+}
+
+// A panel older than the 26.9.9 core shares its hop range as quicParams.udpHop inside fm=,
+// which the core ignores; imported verbatim, the outbound would never hop.
+func TestParseLink_UpgradesLegacyUDPHopFinalMask(t *testing.T) {
+	fm := url.QueryEscape(`{"quicParams":{"udpHop":{"ports":"20000-30000","interval":"5-10"}}}`)
+	res, err := ParseLink("hysteria2://auth@hy.example.com:443?sni=hy.example.com&fm=" + fm + "#hy")
+	if err != nil {
+		t.Fatalf("parse hysteria2 with fm: %v", err)
+	}
+	stream, _ := res.Outbound["streamSettings"].(map[string]any)
+	got, err := json.Marshal(stream["finalmask"])
+	if err != nil {
+		t.Fatalf("marshal finalmask: %v", err)
+	}
+	want := `{"udp":[{"settings":{"interval":"5-10","mode":"intervalRemote","remotePorts":"20000-30000"},"type":"udphop"}]}`
+	if string(got) != want {
+		t.Fatalf("imported finalmask\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// A link from a panel that listed udphop before another UDP mask would leave an outbound
+// whose every dial the core refuses ("incorrect index"); the import puts the hop last.
+func TestParseLink_PutsUDPHopMaskLast(t *testing.T) {
+	fm := url.QueryEscape(`{"udp":[{"type":"udphop","settings":{"mode":"intervalRemote","remotePorts":"20000-30000"}},{"type":"salamander","settings":{"password":"s3cr3t"}}]}`)
+	res, err := ParseLink("hysteria2://auth@hy.example.com:443?sni=hy.example.com&fm=" + fm + "#hy")
+	if err != nil {
+		t.Fatalf("parse hysteria2 with fm: %v", err)
+	}
+	stream, _ := res.Outbound["streamSettings"].(map[string]any)
+	got, _ := json.Marshal(stream["finalmask"])
+	want := `{"udp":[{"settings":{"password":"s3cr3t"},"type":"salamander"},{"settings":{"mode":"intervalRemote","remotePorts":"20000-30000"},"type":"udphop"}]}`
+	if string(got) != want {
+		t.Fatalf("imported finalmask\n got: %s\nwant: %s", got, want)
 	}
 }

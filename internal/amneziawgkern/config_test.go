@@ -168,6 +168,14 @@ func TestRenderRejectsIncompleteInstance(t *testing.T) {
 	}
 }
 
+func TestRenderRejectsPinnedListenAddress(t *testing.T) {
+	inst := testInstance()
+	inst.Listen = "203.0.113.10"
+	if _, err := Render(inst, "eth0", false); err == nil || !strings.Contains(err.Error(), "cannot bind to listen address") {
+		t.Fatalf("Render must refuse to widen a pinned listen address to a wildcard kernel bind, got %v", err)
+	}
+}
+
 func TestConfPathUsesInterfaceName(t *testing.T) {
 	t.Parallel()
 

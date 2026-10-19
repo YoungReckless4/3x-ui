@@ -43,6 +43,8 @@ const INBOUND_PROTOCOL_COLORS: Record<string, string> = {
   http: 'purple',
   mixed: 'lime',
   tunnel: 'orange',
+  tuic: 'orange',
+  masque: 'red',
 };
 
 export function sortHosts(hosts: HostRecord[]): HostRecord[] {

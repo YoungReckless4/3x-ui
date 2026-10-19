@@ -35,6 +35,7 @@ const (
 	BlockerIPv6          BlockerCode = "ipv6"
 	BlockerPortForward   BlockerCode = "portForwarding"
 	BlockerRouteXray     BlockerCode = "routeThroughXray"
+	BlockerListenAddress BlockerCode = "listenAddress"
 )
 
 // Blocker is one unmet requirement. Detail carries the specifics the code
@@ -136,6 +137,9 @@ func Preflight(inst amneziawg.Instance, routeThroughXray bool) error {
 	if routeThroughXray {
 		blockers = append(blockers, Blocker{Code: BlockerRouteXray})
 	}
+	if listenNeedsPinnedBind(inst.Listen) {
+		blockers = append(blockers, Blocker{Code: BlockerListenAddress, Detail: inst.Listen})
+	}
 
 	if len(blockers) == 0 {
 		return nil
@@ -163,6 +167,8 @@ func describe(blockers []Blocker) []string {
 			out = append(out, "per-client port forwarding is not supported in kernel mode yet; clear the forwarded ports first")
 		case BlockerRouteXray:
 			out = append(out, "routeThroughXray has no kernel-mode implementation; it would leave the tunnel with no egress path -- turn it off first")
+		case BlockerListenAddress:
+			out = append(out, fmt.Sprintf("kernel mode cannot bind to the configured listen address %q; clear it or use a wildcard", b.Detail))
 		default:
 			out = append(out, string(b.Code))
 		}

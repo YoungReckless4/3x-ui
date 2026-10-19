@@ -25,6 +25,13 @@ import {
   MASK_ADDRESS,
   ROUTING_DOMAIN_STRATEGIES,
 } from './constants';
+import {
+  directFreedomStrategy,
+  ensureDirectFreedomOutbound,
+  isDirectFreedomOutbound,
+  isDirectTagTaken,
+  setDirectFreedomStrategy,
+} from './helpers';
 
 interface BasicsTabProps {
   templateSettings: XraySettingsValue | null;
@@ -109,15 +116,12 @@ export default function BasicsTab({
     });
   }
 
-  const freedomStrategy =
-    (
-      templateSettings?.outbounds?.find((o) => o?.protocol === 'freedom' && o?.tag === 'direct')
-        ?.settings as { domainStrategy?: string } | undefined
-    )?.domainStrategy ?? 'AsIs';
+  const freedomStrategy = directFreedomStrategy(templateSettings);
 
-  const directFreedomOutbound = templateSettings?.outbounds?.find(
-    (o) => o?.protocol === 'freedom' && o?.tag === 'direct',
+  const directFreedomOutbound = templateSettings?.outbounds?.find((o) =>
+    isDirectFreedomOutbound(o),
   );
+  const directTagTaken = isDirectTagTaken(templateSettings);
   const directHappyEyeballs = (() => {
     const sockopt = (
       directFreedomOutbound?.streamSettings as { sockopt?: { happyEyeballs?: unknown } } | undefined
@@ -131,13 +135,8 @@ export default function BasicsTab({
   const setDirectHappyEyeballs = useCallback(
     (next: ReturnType<typeof HappyEyeballsSchema.parse> | null) => {
       mutate((tt) => {
-        if (!tt.outbounds) tt.outbounds = [];
-        let idx = tt.outbounds.findIndex((o) => o?.protocol === 'freedom' && o?.tag === 'direct');
-        if (idx < 0) {
-          tt.outbounds.push({ protocol: 'freedom', tag: 'direct', settings: {} });
-          idx = tt.outbounds.length - 1;
-        }
-        const ob = tt.outbounds[idx];
+        const ob = ensureDirectFreedomOutbound(tt);
+        if (!ob) return;
         const stream = (ob.streamSettings ?? {}) as Record<string, unknown>;
         const sockopt = (stream.sockopt ?? {}) as Record<string, unknown>;
         if (next == null) {
@@ -161,6 +160,7 @@ export default function BasicsTab({
   );
 
   const routingStrategy = templateSettings?.routing?.domainStrategy ?? 'AsIs';
+  const routingScript = templateSettings?.routing?.script ?? '';
   const log = (templateSettings?.log || {}) as Record<string, unknown>;
   const policy = (templateSettings?.policy?.system || {}) as Record<string, boolean>;
   const level0 = (templateSettings?.policy?.levels?.['0'] || {}) as Record<string, unknown>;
@@ -184,27 +184,10 @@ export default function BasicsTab({
             control={
               <Select
                 value={freedomStrategy}
+                disabled={directTagTaken}
                 style={{ width: '100%' }}
                 options={OutboundDomainStrategies.map((s) => ({ value: s, label: s }))}
-                onChange={(next) =>
-                  mutate((tt) => {
-                    if (!tt.outbounds) tt.outbounds = [];
-                    const idx = tt.outbounds.findIndex(
-                      (o) => o?.protocol === 'freedom' && o?.tag === 'direct',
-                    );
-                    if (idx < 0) {
-                      tt.outbounds.push({
-                        protocol: 'freedom',
-                        tag: 'direct',
-                        settings: { domainStrategy: next },
-                      });
-                    } else {
-                      const ob = tt.outbounds[idx];
-                      ob.settings = (ob.settings || {}) as Record<string, unknown>;
-                      (ob.settings as Record<string, unknown>).domainStrategy = next;
-                    }
-                  })
-                }
+                onChange={(next) => mutate((tt) => setDirectFreedomStrategy(tt, next))}
               />
             }
           />
@@ -215,6 +198,7 @@ export default function BasicsTab({
             control={
               <Switch
                 checked={directHappyEyeballs != null}
+                disabled={directTagTaken}
                 onChange={(checked) => {
                   setDirectHappyEyeballs(checked ? HappyEyeballsSchema.parse({}) : null);
                 }}
@@ -273,6 +257,25 @@ export default function BasicsTab({
                     if (tt.routing) tt.routing.domainStrategy = next;
                   })
                 }
+              />
+            }
+          />
+          <SettingListItem
+            title={t('pages.xray.routingScript')}
+            description={t('pages.xray.routingScriptDesc')}
+            paddings="small"
+            control={
+              <Input
+                value={routingScript}
+                placeholder="routing.lua"
+                onChange={(e) => {
+                  const next = e.target.value;
+                  mutate((tt) => {
+                    if (!tt.routing) return;
+                    if (next.trim() === '') delete tt.routing.script;
+                    else tt.routing.script = next;
+                  });
+                }}
               />
             }
           />

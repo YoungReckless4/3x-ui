@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { describe, expect, it } from 'vitest';
 
-import { hostToExternalProxyEntry, withMtprotoHostEndpoints } from '@/lib/hosts/host-link';
+import { hostToExternalProxyEntry, withHostEndpoints } from '@/lib/hosts/host-link';
 import { inboundFromDb } from '@/lib/xray/inbound-from-db';
 
 describe('hostToExternalProxyEntry', () => {
@@ -19,6 +19,7 @@ describe('hostToExternalProxyEntry', () => {
     overrideSniFromAddress: false,
     keepSniBlank: false,
     vlessRoute: '',
+    allowInsecure: false,
   };
 
   it('maps the overlapping fields onto an external-proxy entry', () => {
@@ -60,9 +61,16 @@ describe('hostToExternalProxyEntry', () => {
     expect(hostToExternalProxyEntry({ ...base, vlessRoute: '443' }).vlessRoute).toBe('443');
     expect(hostToExternalProxyEntry({ ...base, vlessRoute: '' }).vlessRoute).toBeUndefined();
   });
+
+  it('carries allowInsecure through to the entry', () => {
+    expect(hostToExternalProxyEntry({ ...base, allowInsecure: true }).allowInsecure).toBe(true);
+    expect(
+      hostToExternalProxyEntry({ ...base, allowInsecure: false }).allowInsecure,
+    ).toBeUndefined();
+  });
 });
 
-describe('withMtprotoHostEndpoints', () => {
+describe('withHostEndpoints', () => {
   const inbound = inboundFromDb({
     protocol: 'mtproto',
     port: 4060,
@@ -73,7 +81,7 @@ describe('withMtprotoHostEndpoints', () => {
   });
 
   it('projects enabled raw Hosts onto MTProto share endpoints', () => {
-    const got = withMtprotoHostEndpoints(
+    const got = withHostEndpoints(
       inbound,
       7,
       [
@@ -95,7 +103,7 @@ describe('withMtprotoHostEndpoints', () => {
   });
 
   it('inherits the inbound address for a port-only Host', () => {
-    const got = withMtprotoHostEndpoints(
+    const got = withHostEndpoints(
       inbound,
       7,
       [{ groupId: 'port-only', inboundIds: [7], hosts: [':8443'], port: 8443 }],
@@ -108,7 +116,7 @@ describe('withMtprotoHostEndpoints', () => {
   });
 
   it('ignores disabled, excluded and unrelated Hosts', () => {
-    const got = withMtprotoHostEndpoints(
+    const got = withHostEndpoints(
       inbound,
       7,
       [

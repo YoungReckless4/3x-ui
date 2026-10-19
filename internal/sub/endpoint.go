@@ -1,6 +1,7 @@
 package sub
 
 import (
+	"encoding/base64"
 	"strings"
 
 	"github.com/mhsanaei/3x-ui/v3/internal/database/model"
@@ -20,10 +21,11 @@ import (
 // because three behaviors branch on the raw string (keep-base, obj["tls"]
 // rewrite, none-strip).
 type ShareEndpoint struct {
-	Address  string
-	Port     int
-	Remark   string // extra remark slot fed to genRemark, not a rendered remark
-	ForceTls string
+	Address           string
+	Port              int
+	Remark            string // extra remark slot fed to genRemark, not a rendered remark
+	ServerDescription string // subtitle caption displayed in Happ client
+	ForceTls          string
 
 	// ep is the source externalProxy entry. nil for host/default endpoints.
 	ep map[string]any
@@ -38,6 +40,7 @@ func externalProxyToEndpoint(ep map[string]any) ShareEndpoint {
 		e.Port = int(p)
 	}
 	e.Remark, _ = ep["remark"].(string)
+	e.ServerDescription, _ = ep["serverDescription"].(string)
 	e.ForceTls, _ = ep["forceTls"].(string)
 	return e
 }
@@ -51,6 +54,24 @@ func (s *SubService) inboundDefaultEndpoint(inbound *model.Inbound) ShareEndpoin
 		Port:     inbound.Port,
 		ForceTls: "same",
 	}
+}
+
+// advertisedEndpoints is every endpoint a stream-less link (mtproto, wireguard,
+// amneziawg) must fan out over: the externalProxy/Host entries, else the default.
+func (s *SubService) advertisedEndpoints(inbound *model.Inbound) []ShareEndpoint {
+	stream := unmarshalStreamSettings(inbound.StreamSettings)
+	if externalProxies, ok := stream["externalProxy"].([]any); ok {
+		endpoints := make([]ShareEndpoint, 0, len(externalProxies))
+		for _, raw := range externalProxies {
+			if ep, ok := raw.(map[string]any); ok {
+				endpoints = append(endpoints, externalProxyToEndpoint(ep))
+			}
+		}
+		if len(endpoints) > 0 {
+			return endpoints
+		}
+	}
+	return []ShareEndpoint{s.inboundDefaultEndpoint(inbound)}
 }
 
 // applyEndpointTLSParams applies an endpoint's TLS overrides onto a URL-param
@@ -77,7 +98,15 @@ func dropBaseRealityParams(params map[string]string, baseSecurity, securityToApp
 	}
 	// sni and fp name the master's reality dest, not this endpoint's own
 	// certificate; the host's values are re-applied right after this.
-	for _, k := range []string{"pbk", "sid", "spx", "pqv", "sni", "fp"} {
+	for _, k := range []string{
+		"pbk",
+		"sid",
+		"spx",
+		"pqv",
+		"support-x25519mlkem768",
+		"sni",
+		"fp",
+	} {
 		delete(params, k)
 	}
 }
@@ -106,15 +135,27 @@ func (s *SubService) buildEndpointLinks(
 		applyEndpointHostPath(e, nextParams)
 		applyEndpointFinalMask(e, nextParams)
 		applyEndpointAllowInsecure(e, nextParams, securityToApply)
+		remark := makeRemark(e)
+		if e.ServerDescription != "" {
+			remark = appendHappServerDescription(remark, e.ServerDescription)
+		}
 		links = append(links, buildLinkWithParamsAndSecurity(
 			makeLink(e),
 			nextParams,
-			makeRemark(e),
+			remark,
 			securityToApply,
 			e.ForceTls == "none",
 		))
 	}
 	return strings.Join(links, "\n")
+}
+
+func appendHappServerDescription(remark, desc string) string {
+	if desc == "" {
+		return remark
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte(desc))
+	return remark + "?serverDescription=" + encoded
 }
 
 // buildEndpointVmessLinks renders one VMess base64-JSON link per endpoint.
@@ -131,6 +172,9 @@ func (s *SubService) buildEndpointVmessLinks(eps []ShareEndpoint, baseObj map[st
 		newObj["port"] = e.Port
 		if e.ForceTls != "same" {
 			newObj["tls"] = e.ForceTls
+		}
+		if e.ServerDescription != "" {
+			newObj["serverDescription"] = e.ServerDescription
 		}
 		applyEndpointTLSObj(e, newObj, securityToApply)
 		applyEndpointHostPathObj(e, newObj)

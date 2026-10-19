@@ -1,18 +1,18 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Button, Input, Modal, Select, Space, Switch, Tabs, message } from 'antd';
+import { Button, Input, Select, Space, Switch, Tabs, message } from 'antd';
 import {
   BranchesOutlined,
   BuildOutlined,
   CloudSyncOutlined,
   DesktopOutlined,
-  MobileOutlined,
-  NotificationOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import type { AllSetting } from '@/models/setting';
 import { SettingListItem } from '@/components/ui';
-import { buildHappPresetDeeplink, parseList, toBase64Utf8 } from './happPresets';
+import { buildHappPresetDeeplink } from './happPresets';
+import HappRoutingEditorModal from './HappRoutingEditorModal';
+import { catTabLabel } from './catTabLabel';
 
 interface HappSettingsContentProps {
   allSetting: AllSetting;
@@ -28,91 +28,61 @@ export default function HappSettingsContent({
   remoteSourceBadge,
 }: HappSettingsContentProps) {
   const { t } = useTranslation();
+  const [messageApi, messageContextHolder] = message.useMessage();
+  // Generator choices stay local until Apply updates the draft; page Save persists it.
   const [selectedPreset, setSelectedPreset] = useState<string>('iran-bypass');
+  const [includeAdblock, setIncludeAdblock] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  const [directDomains, setDirectDomains] = useState('');
-  const [proxyDomains, setProxyDomains] = useState('');
-  const [blockDomains, setBlockDomains] = useState('');
-  const [directIPs, setDirectIPs] = useState('');
-  const [proxyIPs, setProxyIPs] = useState('');
-  const [blockIPs, setBlockIPs] = useState('');
-
   const applyPreset = () => {
-    const payload = buildHappPresetDeeplink(selectedPreset);
+    const payload = buildHappPresetDeeplink(selectedPreset, includeAdblock);
     if (payload) {
       updateSetting({ subRoutingRules: payload });
-      message.success(t('pages.settings.subHappPresetApplied'));
+      messageApi.success(t('pages.settings.subHappPresetApplied'));
     }
   };
 
-  const handleBuildDeeplink = () => {
-    interface FieldRule {
-      type: string;
-      outboundTag: string;
-      domain?: string[];
-      ip?: string[];
-      network?: string;
-    }
-    const rules: FieldRule[] = [];
-
-    const bDom = parseList(blockDomains);
-    const bIp = parseList(blockIPs);
-    if (bDom.length > 0 || bIp.length > 0) {
-      rules.push({
-        type: 'field',
-        outboundTag: 'block',
-        ...(bDom.length > 0 ? { domain: bDom } : {}),
-        ...(bIp.length > 0 ? { ip: bIp } : {}),
-      });
-    }
-
-    const dDom = parseList(directDomains);
-    const dIp = parseList(directIPs);
-    if (dDom.length > 0 || dIp.length > 0) {
-      rules.push({
-        type: 'field',
-        outboundTag: 'direct',
-        ...(dDom.length > 0 ? { domain: dDom } : {}),
-        ...(dIp.length > 0 ? { ip: dIp } : {}),
-      });
-    }
-
-    const pDom = parseList(proxyDomains);
-    const pIp = parseList(proxyIPs);
-    if (pDom.length > 0 || pIp.length > 0) {
-      rules.push({
-        type: 'field',
-        outboundTag: 'proxy',
-        ...(pDom.length > 0 ? { domain: pDom } : {}),
-        ...(pIp.length > 0 ? { ip: pIp } : {}),
-      });
-    }
-
-    rules.push({
-      type: 'field',
-      outboundTag: 'proxy',
-      network: 'tcp,udp',
-    });
-
-    const deeplink = 'happ://routing/onadd/' + toBase64Utf8(JSON.stringify({ rules }));
+  const handleBuildDeeplink = (deeplink: string) => {
     updateSetting({ subRoutingRules: deeplink });
     setIsModalOpen(false);
-    message.success(t('pages.settings.subHappDeeplinkGenerated'));
+    messageApi.success(t('pages.settings.subHappDeeplinkGenerated'));
   };
 
   return (
     <>
+      {messageContextHolder}
+      <SettingListItem
+        paddings="small"
+        title={t('pages.settings.subHappAutoDetect')}
+        description={t('pages.settings.subHappAutoDetectDesc')}
+      >
+        <Switch
+          checked={allSetting.subHappAutoDetect}
+          onChange={(v) => updateSetting({ subHappAutoDetect: v })}
+        />
+      </SettingListItem>
+
+      <SettingListItem
+        paddings="small"
+        title={t('pages.settings.happLinkEnable')}
+        description={t('pages.settings.happLinkEnableDesc')}
+      >
+        <Switch
+          checked={allSetting.happLinkEnable}
+          onChange={(v) => updateSetting({ happLinkEnable: v })}
+        />
+      </SettingListItem>
+
       <Tabs
         type="card"
         size="small"
         items={[
           {
             key: 'routing',
-            label: (
-              <span>
-                <BranchesOutlined /> {!isMobile && t('pages.settings.subHappGroupRouting')}
-              </span>
+            label: catTabLabel(
+              <BranchesOutlined />,
+              t('pages.settings.subHappGroupRouting'),
+              isMobile,
             ),
             children: (
               <>
@@ -132,21 +102,31 @@ export default function HappSettingsContent({
                   title={t('pages.settings.subHappPresets')}
                   description={t('pages.settings.subHappPresetsDesc')}
                 >
-                  <Space orientation="horizontal" style={{ width: '100%' }}>
+                  <Space orientation="horizontal" wrap style={{ width: '100%' }}>
                     <Select
+                      aria-label={t('pages.settings.subHappPresets')}
                       value={selectedPreset}
                       style={{ minWidth: 170 }}
                       onChange={setSelectedPreset}
                       options={[
                         { value: 'iran-bypass', label: t('pages.settings.subHappPresetIran') },
                         { value: 'china-direct', label: t('pages.settings.subHappPresetChina') },
-                        { value: 'adblock', label: t('pages.settings.subHappPresetAdblock') },
                         { value: 'global', label: t('pages.settings.subHappPresetGlobal') },
+                        { value: 'lan-bypass', label: t('pages.settings.subHappPresetLocal') },
                         { value: 'off', label: t('pages.settings.subHappPresetOff') },
                       ]}
                     />
+                    <Space size="small">
+                      <Switch
+                        aria-label={t('pages.settings.subHappIncludeAdblock')}
+                        checked={includeAdblock}
+                        disabled={selectedPreset === 'off'}
+                        onChange={setIncludeAdblock}
+                      />
+                      <span>{t('pages.settings.subHappIncludeAdblock')}</span>
+                    </Space>
                     <Button type="primary" onClick={applyPreset}>
-                      {t('pages.settings.subHappPresets')}
+                      {t('pages.settings.subHappApplyPreset')}
                     </Button>
                   </Space>
                 </SettingListItem>
@@ -200,11 +180,11 @@ export default function HappSettingsContent({
             ),
           },
           {
-            key: 'banners',
-            label: (
-              <span>
-                <NotificationOutlined /> {!isMobile && t('pages.settings.subHappGroupBanners')}
-              </span>
+            key: 'appearance',
+            label: catTabLabel(
+              <DesktopOutlined />,
+              t('pages.settings.subHappGroupThemes'),
+              isMobile,
             ),
             children: (
               <>
@@ -296,15 +276,59 @@ export default function HappSettingsContent({
                     onChange={(v) => updateSetting({ subHappNotificationExpire: v })}
                   />
                 </SettingListItem>
+
+                <SettingListItem
+                  paddings="small"
+                  title={t('pages.settings.subHappColorProfile')}
+                  description={t('pages.settings.subHappColorProfileDesc')}
+                >
+                  <Space orientation="vertical" style={{ width: '100%' }}>
+                    <Input
+                      value={allSetting.subHappColorProfile}
+                      placeholder='{"serverRowBackgroundColor":"#21003D67"} or resetcolors'
+                      onChange={(e) => updateSetting({ subHappColorProfile: e.target.value })}
+                    />
+                    <Space wrap size="small">
+                      <Button
+                        size="small"
+                        onClick={() => updateSetting({ subHappColorProfile: 'resetcolors' })}
+                      >
+                        {t('reset')}
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={() =>
+                          updateSetting({
+                            subHappColorProfile:
+                              '{"serverRowBackgroundColor":"#21003D67","cardBackgroundColor":"#120023B3"}',
+                          })
+                        }
+                      >
+                        Violet
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={() =>
+                          updateSetting({
+                            subHappColorProfile:
+                              '{"serverRowBackgroundColor":"#002B3667","cardBackgroundColor":"#001F27B3"}',
+                          })
+                        }
+                      >
+                        Turquoise
+                      </Button>
+                    </Space>
+                  </Space>
+                </SettingListItem>
               </>
             ),
           },
           {
             key: 'network',
-            label: (
-              <span>
-                <ThunderboltOutlined /> {!isMobile && t('pages.settings.subHappGroupNetwork')}
-              </span>
+            label: catTabLabel(
+              <ThunderboltOutlined />,
+              t('pages.settings.subHappGroupNetwork'),
+              isMobile,
             ),
             children: (
               <>
@@ -388,6 +412,23 @@ export default function HappSettingsContent({
 
                 <SettingListItem
                   paddings="small"
+                  title={t('pages.settings.subHappLocalProxyAuth')}
+                  description={t('pages.settings.subHappLocalProxyAuthDesc')}
+                >
+                  <Select
+                    value={allSetting.subHappLocalProxyAuth ?? 'auto'}
+                    style={{ width: '100%' }}
+                    onChange={(v) => updateSetting({ subHappLocalProxyAuth: v })}
+                    options={[
+                      { value: 'auto', label: t('pages.settings.subHappLocalProxyAuthAuto') },
+                      { value: 'disable', label: t('pages.settings.subHappLocalProxyAuthDisable') },
+                      { value: '', label: t('pages.settings.subHappLocalProxyAuthUnset') },
+                    ]}
+                  />
+                </SettingListItem>
+
+                <SettingListItem
+                  paddings="small"
                   title={t('pages.settings.subHappAutoConnect')}
                   description={t('pages.settings.subHappAutoConnectDesc')}
                 >
@@ -416,27 +457,34 @@ export default function HappSettingsContent({
                     ]}
                   />
                 </SettingListItem>
-              </>
-            ),
-          },
-          {
-            key: 'themes',
-            label: (
-              <span>
-                <DesktopOutlined /> {!isMobile && t('pages.settings.subHappGroupThemes')}
-              </span>
-            ),
-            children: (
-              <>
+
                 <SettingListItem
                   paddings="small"
-                  title={t('pages.settings.subHappColorProfile')}
-                  description={t('pages.settings.subHappColorProfileDesc')}
+                  title={t('pages.settings.subHappPerAppMode')}
+                  description={t('pages.settings.subHappPerAppModeDesc')}
                 >
-                  <Input
-                    value={allSetting.subHappColorProfile}
-                    placeholder="default, violet, turquoise, cyberpunk, or custom JSON"
-                    onChange={(e) => updateSetting({ subHappColorProfile: e.target.value })}
+                  <Select
+                    value={allSetting.subHappPerAppMode || 'off'}
+                    style={{ width: '100%' }}
+                    onChange={(v) => updateSetting({ subHappPerAppMode: v })}
+                    options={[
+                      { value: 'off', label: t('pages.settings.subHappPerAppOff') },
+                      { value: 'on', label: t('pages.settings.subHappPerAppOn') },
+                      { value: 'bypass', label: t('pages.settings.subHappPerAppBypass') },
+                    ]}
+                  />
+                </SettingListItem>
+
+                <SettingListItem
+                  paddings="small"
+                  title={t('pages.settings.subHappPerAppList')}
+                  description={t('pages.settings.subHappPerAppListDesc')}
+                >
+                  <Input.TextArea
+                    value={allSetting.subHappPerAppList}
+                    rows={4}
+                    placeholder="org.telegram.messenger, com.google.android.youtube"
+                    onChange={(e) => updateSetting({ subHappPerAppList: e.target.value })}
                   />
                 </SettingListItem>
               </>
@@ -444,24 +492,13 @@ export default function HappSettingsContent({
           },
           {
             key: 'failover',
-            label: (
-              <span>
-                <CloudSyncOutlined /> {!isMobile && t('pages.settings.subHappGroupFailover')}
-              </span>
+            label: catTabLabel(
+              <CloudSyncOutlined />,
+              t('pages.settings.subHappGroupFailover'),
+              isMobile,
             ),
             children: (
               <>
-                <SettingListItem
-                  paddings="small"
-                  title={t('pages.settings.subHappAutoDetect')}
-                  description={t('pages.settings.subHappAutoDetectDesc')}
-                >
-                  <Switch
-                    checked={allSetting.subHappAutoDetect}
-                    onChange={(v) => updateSetting({ subHappAutoDetect: v })}
-                  />
-                </SettingListItem>
-
                 <SettingListItem
                   paddings="small"
                   title={t('pages.settings.subHappProviderId')}
@@ -511,127 +548,17 @@ export default function HappSettingsContent({
               </>
             ),
           },
-          {
-            key: 'android',
-            label: (
-              <span>
-                <MobileOutlined /> {!isMobile && t('pages.settings.subHappGroupAndroid')}
-              </span>
-            ),
-            children: (
-              <>
-                <SettingListItem
-                  paddings="small"
-                  title={t('pages.settings.subHappPerAppMode')}
-                  description={t('pages.settings.subHappPerAppModeDesc')}
-                >
-                  <Select
-                    value={allSetting.subHappPerAppMode || 'off'}
-                    style={{ width: '100%' }}
-                    onChange={(v) => updateSetting({ subHappPerAppMode: v })}
-                    options={[
-                      { value: 'off', label: t('pages.settings.subHappPerAppOff') },
-                      { value: 'on', label: t('pages.settings.subHappPerAppOn') },
-                      { value: 'bypass', label: t('pages.settings.subHappPerAppBypass') },
-                    ]}
-                  />
-                </SettingListItem>
-
-                <SettingListItem
-                  paddings="small"
-                  title={t('pages.settings.subHappPerAppList')}
-                  description={t('pages.settings.subHappPerAppListDesc')}
-                >
-                  <Input.TextArea
-                    value={allSetting.subHappPerAppList}
-                    rows={4}
-                    placeholder="org.telegram.messenger, com.google.android.youtube"
-                    onChange={(e) => updateSetting({ subHappPerAppList: e.target.value })}
-                  />
-                </SettingListItem>
-              </>
-            ),
-          },
         ]}
       />
 
-      <Modal
-        title={t('pages.settings.subHappModalTitle')}
-        open={isModalOpen}
-        onCancel={() => setIsModalOpen(false)}
-        onOk={handleBuildDeeplink}
-        okText={t('pages.settings.subHappBuildDeeplink')}
-        width={650}
-      >
-        <Space direction="vertical" style={{ width: '100%', marginTop: 12 }} size="middle">
-          <div>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>
-              {t('pages.settings.subHappDirectDomains')}
-            </div>
-            <Input.TextArea
-              rows={2}
-              value={directDomains}
-              placeholder="domain:ir, domain:cn, example.local"
-              onChange={(e) => setDirectDomains(e.target.value)}
-            />
-          </div>
-          <div>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>
-              {t('pages.settings.subHappProxyDomains')}
-            </div>
-            <Input.TextArea
-              rows={2}
-              value={proxyDomains}
-              placeholder="geosite:google, youtube.com"
-              onChange={(e) => setProxyDomains(e.target.value)}
-            />
-          </div>
-          <div>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>
-              {t('pages.settings.subHappBlockDomains')}
-            </div>
-            <Input.TextArea
-              rows={2}
-              value={blockDomains}
-              placeholder="geosite:category-ads-all, analytics.google.com"
-              onChange={(e) => setBlockDomains(e.target.value)}
-            />
-          </div>
-          <div>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>
-              {t('pages.settings.subHappDirectIPs')}
-            </div>
-            <Input.TextArea
-              rows={2}
-              value={directIPs}
-              placeholder="geoip:ir, 192.168.0.0/16, 10.0.0.0/8"
-              onChange={(e) => setDirectIPs(e.target.value)}
-            />
-          </div>
-          <div>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>
-              {t('pages.settings.subHappProxyIPs')}
-            </div>
-            <Input.TextArea
-              rows={2}
-              value={proxyIPs}
-              placeholder="1.1.1.1/32, 8.8.8.8/32"
-              onChange={(e) => setProxyIPs(e.target.value)}
-            />
-          </div>
-          <div>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>
-              {t('pages.settings.subHappBlockIPs')}
-            </div>
-            <Input.TextArea
-              rows={2}
-              value={blockIPs}
-              placeholder="geoip:phishing, 0.0.0.0/8"
-              onChange={(e) => setBlockIPs(e.target.value)}
-            />
-          </div>
-        </Space>
-      </Modal>
+      {/* Mount per opening so canceled edits are discarded and the latest parent draft is loaded. */}
+      {isModalOpen ? (
+        <HappRoutingEditorModal
+          input={allSetting.subRoutingRules}
+          onCancel={() => setIsModalOpen(false)}
+          onGenerate={handleBuildDeeplink}
+        />
+      ) : null}
     </>
   );
 }

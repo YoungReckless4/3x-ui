@@ -102,6 +102,12 @@ func TestPreflightAddsInstanceBlockers(t *testing.T) {
 	if err := Preflight(v6addr, false); err == nil || !strings.Contains(err.Error(), "IPv6") {
 		t.Errorf("Preflight must refuse peers with IPv6 AllowedIPs, got %v", err)
 	}
+
+	pinned := testInstance()
+	pinned.Listen = "203.0.113.10"
+	if err := Preflight(pinned, false); err == nil || !strings.Contains(err.Error(), "cannot bind to the configured listen address") {
+		t.Errorf("Preflight must refuse a pinned listen address the kernel backend cannot honor, got %v", err)
+	}
 }
 
 // TestPreflightDoesNotInventInstanceBlockers: a plain instance must only ever
@@ -138,6 +144,7 @@ func TestDescribeCoversEveryCode(t *testing.T) {
 	all := []BlockerCode{
 		BlockerNotRoot, BlockerToolsMissing, BlockerModuleMissing,
 		BlockerNftMissing, BlockerIPv6, BlockerPortForward, BlockerRouteXray,
+		BlockerListenAddress,
 	}
 	for _, c := range all {
 		got := describe([]Blocker{{Code: c, Detail: "awg"}})

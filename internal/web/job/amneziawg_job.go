@@ -21,6 +21,7 @@ const endpointWindow = 30 * time.Minute
 type AmneziaWGJob struct {
 	inboundService service.InboundService
 	settingService service.SettingService
+	xrayService    service.XrayService
 }
 
 // NewAmneziaWGJob creates a new AmneziaWG reconcile job instance.
@@ -72,6 +73,10 @@ func (j *AmneziaWGJob) Run() {
 		return
 	}
 	amneziawgnet.GetOutboundManager().Reconcile(outboundDesired)
+	// Xray's bridges are generated apart from the listener; one that moved needs them regenerated.
+	if amneziawgnet.BridgesStale() {
+		j.xrayService.SetToNeedRestart()
+	}
 }
 
 // desiredOutboundInstances derives client instances per template "amneziawg" outbound.

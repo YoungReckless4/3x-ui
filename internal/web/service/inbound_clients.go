@@ -24,10 +24,12 @@ type CopyClientsResult struct {
 	Errors  []string `json:"errors"`
 }
 
-// enrichClientStats parses each inbound's clients once, fills in the
-// UUID/SubId fields on the preloaded ClientStats, and tops up rows owned by
-// a sibling inbound (shared-email mode — the row is keyed on email so it
-// only preloads on its owning inbound).
+// enrichClientStats resolves each inbound's clients from the clients table
+// once, fills in the UUID/SubId fields on the preloaded ClientStats, and tops
+// up rows owned by a sibling inbound (shared-email mode — the row is keyed on
+// email so it only preloads on its owning inbound). Reading identity from the
+// clients table keeps /inbounds/list in sync with the running Xray config
+// when the embedded settings JSON is stale (#6436).
 func (s *InboundService) enrichClientStats(db *gorm.DB, inbounds []*model.Inbound) {
 	if len(inbounds) == 0 {
 		return
@@ -55,13 +57,14 @@ func (s *InboundService) enrichClientStats(db *gorm.DB, inbounds []*model.Inboun
 // backfillClientStats tops up each inbound's preloaded ClientStats with rows
 // owned by a sibling inbound: client_traffics is keyed on email, so a client
 // attached to several inbounds has one row that only preloads on the inbound
-// it was created on. Returns the parsed clients per inbound for reuse.
+// it was created on. Returns the clients-table clients per inbound for reuse
+// (not the embedded settings JSON, which can lag the live UUID — #6436).
 func (s *InboundService) backfillClientStats(db *gorm.DB, inbounds []*model.Inbound) [][]model.Client {
 	clientsByInbound := make([][]model.Client, len(inbounds))
 	seenByInbound := make([]map[string]struct{}, len(inbounds))
 	missing := make(map[string]struct{})
 	for i, inbound := range inbounds {
-		clients, _ := s.GetClients(inbound)
+		clients, _ := s.clientService.ListForInbound(db, inbound.Id)
 		clientsByInbound[i] = clients
 		seen := make(map[string]struct{}, len(inbound.ClientStats))
 		for _, st := range inbound.ClientStats {
@@ -121,14 +124,14 @@ func (s *InboundService) backfillClientStats(db *gorm.DB, inbounds []*model.Inbo
 	return clientsByInbound
 }
 
-// emailUsedByOtherInbounds reports whether email lives in any inbound other
-// than exceptInboundId. Empty email returns false.
-func (s *InboundService) emailUsedByOtherInbounds(email string, exceptInboundId int) (bool, error) {
+// emailUsedByOtherInbounds reports whether email lives in any inbound other than
+// exceptInboundId. Inside a transaction pass tx: a pool query there starves the pool.
+func (s *InboundService) emailUsedByOtherInbounds(db *gorm.DB, email string, exceptInboundId int) (bool, error) {
 	if email == "" {
 		return false, nil
 	}
 	var count int64
-	err := database.GetDB().Table("client_inbounds").
+	err := db.Table("client_inbounds").
 		Joins("JOIN clients ON clients.id = client_inbounds.client_id").
 		Where("client_inbounds.inbound_id != ? AND LOWER(clients.email) = ?",
 			exceptInboundId, strings.ToLower(strings.TrimSpace(email))).
@@ -139,7 +142,7 @@ func (s *InboundService) emailUsedByOtherInbounds(email string, exceptInboundId 
 	return count > 0, nil
 }
 
-func (s *InboundService) emailsUsedByOtherInbounds(emails []string, exceptInboundId int) (map[string]bool, error) {
+func (s *InboundService) emailsUsedByOtherInbounds(db *gorm.DB, emails []string, exceptInboundId int) (map[string]bool, error) {
 	shared := make(map[string]bool, len(emails))
 	want := make(map[string]struct{}, len(emails))
 	for _, e := range emails {
@@ -155,7 +158,6 @@ func (s *InboundService) emailsUsedByOtherInbounds(emails []string, exceptInboun
 	for e := range want {
 		lowered = append(lowered, e)
 	}
-	db := database.GetDB()
 	for _, batch := range chunkStrings(lowered, sqlInChunk) {
 		var rows []struct{ Email string }
 		err := db.Table("client_inbounds").
@@ -227,12 +229,15 @@ func (s *InboundService) buildTargetClientFromSource(source model.Client, target
 			inboundCanEnableTlsFlow(string(targetProtocol), targetInbound.StreamSettings, targetInbound.Settings) {
 			target.Flow = flow
 		}
-	case model.Trojan, model.Shadowsocks:
+	case model.Trojan, model.Shadowsocks, model.MASQUE:
 		target.Password = s.generateRandomCredential(targetProtocol)
 	case model.Hysteria:
 		target.Auth = s.generateRandomCredential(targetProtocol)
 	case model.MTProto:
 		target.Secret = model.GenerateFakeTLSSecret(mtprotoDomainFromSettings(targetInbound.Settings))
+	case model.TUIC:
+		target.ID = uuid.NewString()
+		target.Password = s.generateRandomCredential(targetProtocol)
 	default:
 		target.ID = s.generateRandomCredential(targetProtocol)
 	}

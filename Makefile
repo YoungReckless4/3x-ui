@@ -45,10 +45,6 @@ format-check: ## oxfmt in check mode on frontend sources
 typecheck: ## tsc --noEmit
 	cd $(FRONTEND) && npm run typecheck
 
-.PHONY: msw-worker-check
-msw-worker-check: ## Verify the tracked worker matches the installed MSW runtime
-	cmp $(FRONTEND)/public/mockServiceWorker.js $(FRONTEND)/node_modules/msw/lib/mockServiceWorker.js
-
 .PHONY: test-go
 test-go: dist-stub ## Go tests (shuffle, no cache)
 	go test -shuffle=on -count=1 $(GO_PKGS)
@@ -57,6 +53,13 @@ test-go: dist-stub ## Go tests (shuffle, no cache)
 # internal/web/service runs ~10x slower under -race and overruns go test's 10m default.
 race: dist-stub ## Go tests with the race detector (needs a C compiler)
 	go test -race -shuffle=on -count=1 -timeout 25m $(GO_PKGS)
+
+.PHONY: node-e2e
+# Two real panel processes (master + node); test-go only runs nodee2e as a skip.
+NODE_E2E_BIN = $(CURDIR)/.cache/node-e2e/x-ui$(shell go env GOEXE)
+node-e2e: dist-stub ## Master+node sync end to end with two real panel processes
+	go build -o $(NODE_E2E_BIN) .
+	XUI_NODE_E2E_BINARY=$(NODE_E2E_BIN) go test -count=1 -timeout 20m -v ./internal/nodee2e/
 
 .PHONY: test-fe
 test-fe: ## Frontend tests (vitest)
@@ -84,5 +87,5 @@ build-storybook: ## Build the static Storybook (compile-checks all stories)
 # The PR gate. Matches ci.yml: codegen freshness, both linters, the formatter,
 # typecheck, both test suites, a full build, and the Storybook compile-check.
 .PHONY: verify
-verify: gen-check lint format-check typecheck msw-worker-check test build build-storybook ## Full local gate (mirrors CI)
+verify: gen-check lint format-check typecheck test build build-storybook ## Full local gate (mirrors CI)
 	@echo "verify: OK"

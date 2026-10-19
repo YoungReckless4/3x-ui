@@ -14,8 +14,8 @@ import (
 	"github.com/mhsanaei/3x-ui/v3/internal/database"
 	"github.com/mhsanaei/3x-ui/v3/internal/database/model"
 	"github.com/mhsanaei/3x-ui/v3/internal/logger"
+	"github.com/mhsanaei/3x-ui/v3/internal/tuic"
 	wgutil "github.com/mhsanaei/3x-ui/v3/internal/util/wireguard"
-	"github.com/mhsanaei/3x-ui/v3/internal/xray"
 )
 
 // DesiredAmneziaWGInstances derives the AmneziaWG interfaces this panel
@@ -38,47 +38,38 @@ func (s *InboundService) DesiredAmneziaWGInstances() ([]amneziawg.Instance, erro
 		return nil, nil
 	}
 
-	ids := make([]int, 0, len(inbounds))
-	for _, ib := range inbounds {
-		ids = append(ids, ib.Id)
-	}
-	var disabledRows []xray.ClientTraffic
-	err = db.Model(xray.ClientTraffic{}).
-		Where("inbound_id IN ? AND enable = ?", ids, false).
-		Select("inbound_id", "email").
-		Find(&disabledRows).Error
-	if err != nil {
-		return nil, err
-	}
-	disabled := make(map[int]map[string]struct{}, len(disabledRows))
-	for _, row := range disabledRows {
-		if disabled[row.InboundId] == nil {
-			disabled[row.InboundId] = map[string]struct{}{}
-		}
-		disabled[row.InboundId][row.Email] = struct{}{}
-	}
-
 	instances := make([]amneziawg.Instance, 0, len(inbounds))
 	for _, ib := range inbounds {
 		inst, ok := amneziawg.InstanceFromInbound(ib)
 		if !ok {
 			continue
 		}
-		if off := disabled[ib.Id]; len(off) > 0 {
-			kept := make([]amneziawg.Peer, 0, len(inst.Peers))
-			for _, p := range inst.Peers {
-				if _, skip := off[p.Email]; !skip {
-					kept = append(kept, p)
-				}
-			}
-			inst.Peers = kept
-		}
-		if len(inst.Peers) == 0 {
-			continue
-		}
 		instances = append(instances, inst)
 	}
-	return instances, nil
+	emails := make([]string, 0)
+	for _, inst := range instances {
+		for _, e := range inst.Peers {
+			emails = append(emails, e.Email)
+		}
+	}
+	disabled, err := trafficDisabledEmails(db, emails)
+	if err != nil {
+		return nil, err
+	}
+	served := instances[:0]
+	for _, inst := range instances {
+		kept := make([]amneziawg.Peer, 0, len(inst.Peers))
+		for _, e := range inst.Peers {
+			if _, off := disabled[e.Email]; !off {
+				kept = append(kept, e)
+			}
+		}
+		inst.Peers = kept
+		if len(kept) > 0 {
+			served = append(served, inst)
+		}
+	}
+	return served, nil
 }
 
 // applyLocalAmneziaWG pushes a single local AmneziaWG inbound's current peer
@@ -239,7 +230,7 @@ func (s *InboundService) normalizeAmneziaWGSettings(inbound *model.Inbound, oldS
 	} {
 		*f = amneziawg.CanonicalizeUintRange(*f)
 	}
-	if err := amneziawg.ValidateObfuscation(parsed.Server.Obfuscation()); err != nil {
+	if err := amneziawg.ValidateServerObfuscation(parsed.Server.Obfuscation()); err != nil {
 		return fmt.Errorf("amneziawg: %w", err)
 	}
 	if err := amneziawg.ValidateIPv6Subnet(parsed.Server.IPv6Enabled, parsed.Server.IPv6Subnet); err != nil {
@@ -273,14 +264,14 @@ func (s *InboundService) normalizeAmneziaWGSettings(inbound *model.Inbound, oldS
 		}
 	}
 
-	portCtx, err := s.loadPortConflictContext(database.GetDB())
+	portCtx, err := s.loadPortConflictContext(database.GetDB(), inbound.NodeID)
 	if err != nil {
 		return err
 	}
 	for i := range parsed.Clients {
 		c := &parsed.Clients[i]
-		if hit := s.checkForwardedPortsConflict(portCtx, c.ForwardedPorts); hit != "" {
-			return fmt.Errorf("amneziawg: client %q forwardedPorts collides with %s", c.Email, hit)
+		if err := s.amneziaWGForwardedPortsConflict(portCtx, c); err != nil {
+			return err
 		}
 		if err := amneziawg.ValidateConfigValue("email", c.Email); err != nil {
 			return fmt.Errorf("amneziawg: %w", err)
@@ -314,7 +305,23 @@ func (s *InboundService) normalizeAmneziaWGSettings(inbound *model.Inbound, oldS
 
 	// Refuse a kernel-mode save this host cannot honour while the admin is still
 	// in front of the form; the reconcile job could only log and retry.
-	if inst, ok := amneziawg.InstanceFromInbound(inbound); ok && inst.KernelMode {
+	if parsed.Server.KernelMode {
+		inst, ok := amneziawg.InstanceFromInbound(inbound)
+		if !ok {
+			inst = amneziawg.Instance{
+				Listen:           inbound.Listen,
+				IPv6Enabled:      parsed.Server.IPv6Enabled,
+				RouteThroughXray: parsed.Server.RouteThroughXray,
+			}
+			for _, client := range parsed.Clients {
+				if client.Enable {
+					inst.Peers = append(inst.Peers, amneziawg.Peer{
+						AllowedIPs:     client.AllowedIPs,
+						ForwardedPorts: client.ForwardedPorts,
+					})
+				}
+			}
+		}
 		if err := amneziawgkern.Preflight(inst, inst.RouteThroughXray); err != nil {
 			return err
 		}
@@ -322,41 +329,65 @@ func (s *InboundService) normalizeAmneziaWGSettings(inbound *model.Inbound, oldS
 	return nil
 }
 
-// portConflictContext caches the state checkForwardedPortsConflict needs —
-// the panel's own port and this host's enabled inbound ports — so validating
-// N clients in one save (normalizeAmneziaWGSettings, or a bulk client add)
-// costs one query total instead of N. Load it once with
-// loadPortConflictContext and pass it to every checkForwardedPortsConflict
-// call in that batch.
+// portConflictContext caches what checkForwardedPortsConflict needs about the
+// host a forward listener binds on, so one save costs one query, not N.
 type portConflictContext struct {
 	webPort  int
 	inbounds []*model.Inbound
+	// onNode: the host is a node, whose web port and relay ports (derived from
+	// its own inbound ids) this panel does not know; the node re-checks both.
+	onNode bool
 }
 
-// loadPortConflictContext loads the panel's own port and every enabled
-// inbound hosted on THIS panel (node_id IS NULL) — an inbound hosted on a
-// different node listens on that node's own host, never this one, so it can
-// never collide with a DNAT rule this process installs.
-func (s *InboundService) loadPortConflictContext(db *gorm.DB) (portConflictContext, error) {
+// loadPortConflictContext loads every enabled inbound hosted where nodeID's rows
+// run -- this panel for nil, else that node -- plus this panel's own port.
+func (s *InboundService) loadPortConflictContext(db *gorm.DB, nodeID *int) (portConflictContext, error) {
 	var ctx portConflictContext
-	if webPort, err := (&SettingService{}).GetPort(); err == nil {
-		ctx.webPort = webPort
+	q := db.Model(model.Inbound{}).Where("enable = ?", true)
+	if nodeID != nil {
+		ctx.onNode = true
+		q = q.Where("node_id = ?", *nodeID)
+	} else {
+		if webPort, err := (&SettingService{}).GetPort(); err == nil {
+			ctx.webPort = webPort
+		}
+		q = q.Where("node_id IS NULL")
 	}
-	err := db.Model(model.Inbound{}).
-		Where("enable = ? AND node_id IS NULL", true).
-		Find(&ctx.inbounds).Error
+	err := q.Find(&ctx.inbounds).Error
 	return ctx, err
 }
 
-// checkForwardedPortsConflict reports whether a client's ForwardedPorts spec
-// exceeds the cap, covers the panel's own web port, one of this host's own
-// enabled inbound listen ports, or an AmneziaWG inbound's own phantom SOCKS5
-// relay port (SOCKSPortForInbound -- never a real inbounds row, so the loop
-// below can't see it any other way). A collision on the SOCKS5 port would
-// let a port-forward listener race Xray's own relay for the bind and, if it
-// wins, take down that inbound's entire relay rather than just one forward.
-// Returns a human-readable description of the first collision found, or ""
-// when there is none.
+// amneziaWGForwardedPortsConflict renders one client's ForwardedPorts collision,
+// or nil: the single copy both the pre-Save pass and the post-Save re-run use.
+func (s *InboundService) amneziaWGForwardedPortsConflict(ctx portConflictContext, c *model.Client) error {
+	hit := s.checkForwardedPortsConflict(ctx, c.ForwardedPorts)
+	if hit == "" {
+		return nil
+	}
+	return fmt.Errorf("amneziawg: client %q forwardedPorts collides with %s", c.Email, hit)
+}
+
+// checkAmneziaWGForwardedPorts re-runs the guard over one row's stored clients:
+// on create it ran before Save, when the row's own ports were not in the context.
+func (s *InboundService) checkAmneziaWGForwardedPorts(db *gorm.DB, settings string) error {
+	var parsed amneziawg.InboundSettings
+	if err := json.Unmarshal([]byte(settings), &parsed); err != nil {
+		return nil
+	}
+	ctx, err := s.loadPortConflictContext(db, nil)
+	if err != nil {
+		return err
+	}
+	for i := range parsed.Clients {
+		if err := s.amneziaWGForwardedPortsConflict(ctx, &parsed.Clients[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkForwardedPortsConflict names the panel, inbound or AmneziaWG relay port a
+// client's ForwardedPorts spec would collide with: a lost bind race kills the relay.
 func (s *InboundService) checkForwardedPortsConflict(ctx portConflictContext, forwardedPorts string) string {
 	if forwardedPorts == "" {
 		return ""
@@ -375,10 +406,21 @@ func (s *InboundService) checkForwardedPortsConflict(ctx portConflictContext, fo
 			}
 			return fmt.Sprintf("inbound '%s' (#%d, port %d)", name, ib.Id, ib.Port)
 		}
-		if ib.Protocol != model.AmneziaWG {
+		if ctx.onNode {
 			continue
 		}
-		socksPort := amneziawgnet.SOCKSPortForInbound(ib.Id)
+		var socksPort int
+		switch ib.Protocol {
+		case model.AmneziaWG:
+			if amneziawgKernelMode(ib) {
+				continue
+			}
+			socksPort = amneziawgnet.SOCKSPortForInbound(ib.Id)
+		case model.TUIC:
+			socksPort = tuic.SOCKSPortForInbound(ib.Id)
+		default:
+			continue
+		}
 		if amneziawg.ForwardedPortsInclude(forwardedPorts, socksPort) {
 			name := ib.Remark
 			if name == "" {

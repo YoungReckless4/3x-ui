@@ -16,6 +16,8 @@ const MULTI_USER_PROTOCOLS = new Set([
   'wireguard',
   'mtproto',
   'amneziawg',
+  'tuic',
+  'masque',
 ]);
 
 interface BulkDetachInboundsModalProps {

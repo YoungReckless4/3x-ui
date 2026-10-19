@@ -62,6 +62,9 @@ func natTableName(inst amneziawg.Instance) string {
 // it. When routeThroughXray is set the masquerade rules are omitted: the
 // TPROXY bridge takes the packets before they would reach postrouting.
 func Render(inst amneziawg.Instance, egressInterface string, routeThroughXray bool) (string, error) {
+	if listenNeedsPinnedBind(inst.Listen) {
+		return "", fmt.Errorf("amneziawgkern: kernel mode cannot bind to listen address %q; clear it or use a wildcard", inst.Listen)
+	}
 	if inst.PrivateKey == "" {
 		return "", fmt.Errorf("amneziawgkern: inbound %d has no private key", inst.Id)
 	}
@@ -102,6 +105,15 @@ func Render(inst amneziawg.Instance, egressInterface string, routeThroughXray bo
 		fmt.Fprintf(&b, "AllowedIPs = %s\n", strings.Join(p.AllowedIPs, ", "))
 	}
 	return b.String(), nil
+}
+
+func listenNeedsPinnedBind(listen string) bool {
+	switch strings.TrimSpace(listen) {
+	case "", "0.0.0.0", "::", "::0":
+		return false
+	default:
+		return true
+	}
 }
 
 // writeObfuscation emits the AmneziaWG parameter block. H1-H4 fall back to

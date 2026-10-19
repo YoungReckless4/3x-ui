@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/mhsanaei/3x-ui/v3/internal/database"
+	"github.com/mhsanaei/3x-ui/v3/internal/database/dbtest"
 	"github.com/mhsanaei/3x-ui/v3/internal/database/model"
 	"github.com/mhsanaei/3x-ui/v3/internal/util/crypto"
 	"github.com/mhsanaei/3x-ui/v3/internal/web/runtime"
@@ -23,15 +24,16 @@ func TestNodeSyncPushSkipsOperatorTLSGuard(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	dbDir := t.TempDir()
 	t.Setenv("XUI_DB_FOLDER", dbDir)
-	if err := database.InitDB(filepath.Join(dbDir, "x-ui.db")); err != nil {
-		t.Fatalf("InitDB: %v", err)
-	}
-	t.Cleanup(func() { _ = database.CloseDB() })
+	dbtest.InitDB(t, filepath.Join(dbDir, "x-ui.db"))
 	prev := runtime.GetManager()
 	runtime.SetManager(runtime.NewManager(runtime.LocalDeps{APIPort: func() int { return 0 }, SetNeedRestart: func() {}}))
 	t.Cleanup(func() { runtime.SetManager(prev) })
 
-	for name, scope := range map[string]string{"node-sync": model.ApiScopeNodeSync, "admin": model.ApiScopeAdmin} {
+	for name, scope := range map[string]string{
+		"node-sync":  model.ApiScopeNodeSync,
+		"node-admin": model.ApiScopeNodeAdmin,
+		"admin":      model.ApiScopeAdmin,
+	} {
 		row := &model.ApiToken{Name: name, Token: crypto.HashTokenSHA256(name + "-token"), Enabled: true, Scope: scope}
 		if err := database.GetDB().Create(row).Error; err != nil {
 			t.Fatalf("seed %s token: %v", name, err)
@@ -77,6 +79,16 @@ func TestNodeSyncPushSkipsOperatorTLSGuard(t *testing.T) {
 			t.Fatalf("node-sync add rejected: %s", body)
 		}
 		if got := rows(t, "tls-legacy-45001"); got != 1 {
+			t.Fatalf("stored rows = %d, want 1", got)
+		}
+	})
+
+	t.Run("a node admin push keeps node sync semantics", func(t *testing.T) {
+		body := add(t, "node-admin-token", 45003)
+		if !strings.Contains(body, `"success":true`) {
+			t.Fatalf("node-admin add rejected: %s", body)
+		}
+		if got := rows(t, "tls-legacy-45003"); got != 1 {
 			t.Fatalf("stored rows = %d, want 1", got)
 		}
 	})

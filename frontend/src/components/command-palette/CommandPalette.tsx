@@ -13,8 +13,10 @@ import {
   ClusterOutlined,
   CodeOutlined,
   CopyOutlined,
+  CrownOutlined,
   DashboardOutlined,
   DatabaseOutlined,
+  DiscordOutlined,
   ExportOutlined,
   FileTextOutlined,
   GlobalOutlined,
@@ -62,6 +64,7 @@ interface PaletteItem {
 
 export default function CommandPalette() {
   const { t } = useTranslation();
+  const [messageApi, messageContextHolder] = message.useMessage();
   const navigate = useNavigate();
   const { isDark, isUltra, toggleTheme, toggleUltra, antdThemeConfig } = useTheme();
   const { isOpen, close } = useCommandPalette();
@@ -192,14 +195,14 @@ export default function CommandPalette() {
   const copySubscription = useCallback(
     async (client: ClientRecord) => {
       if (!client.subId || !allSetting.subURI) {
-        message.warning(t('pages.clients.noSubId'));
+        messageApi.warning(t('pages.clients.noSubId'));
         return;
       }
       const link = `${allSetting.subURI}${client.subId}`;
       const ok = await ClipboardManager.copyText(link);
-      if (ok) message.success(t('copied'));
+      if (ok) messageApi.success(t('copied'));
     },
-    [allSetting.subURI, t],
+    [allSetting.subURI, messageApi, t],
   );
 
   const restartXray = useCallback(async () => {
@@ -208,9 +211,9 @@ export default function CommandPalette() {
       silentSuccess: true,
     });
     if (msg?.success) {
-      message.success(t('commandPalette.restartXraySuccess'));
+      messageApi.success(t('commandPalette.restartXraySuccess'));
     }
-  }, [close, t]);
+  }, [close, messageApi, t]);
 
   const cycleTheme = useCallback(() => {
     if (!isDark) {
@@ -360,6 +363,7 @@ export default function CommandPalette() {
           'shadowsocks',
           'wireguard',
           'hysteria',
+          'masque',
         ],
         icon: <ImportOutlined />,
       },
@@ -417,6 +421,12 @@ export default function CommandPalette() {
         keywords: ['api', 'api docs', 'swagger', 'rest api', 'endpoints'],
         icon: <ApiOutlined />,
       },
+      {
+        path: '/sponsors',
+        title: t('menu.sponsors'),
+        keywords: ['sponsors', 'sponsor', 'partners'],
+        icon: <CrownOutlined />,
+      },
     ];
 
     pages
@@ -463,6 +473,13 @@ export default function CommandPalette() {
         subtitle: t('pages.settings.emailSettings'),
         keywords: ['email', 'smtp', 'mail', 'crash alerts'],
         icon: <MailOutlined />,
+      },
+      {
+        path: '/settings#discord',
+        title: `${t('menu.settings')} · ${t('pages.settings.discordSettings')}`,
+        subtitle: t('pages.settings.discordSettings'),
+        keywords: ['discord', 'bot', 'channel', 'notifications', 'alerts'],
+        icon: <DiscordOutlined />,
       },
       {
         path: '/settings#subscription',
@@ -664,13 +681,15 @@ export default function CommandPalette() {
     }
   };
 
-  if (!isOpen) return null;
+  // Kept mounted while closed: restartXray closes the palette before its toast.
+  if (!isOpen) return messageContextHolder;
 
   let lastCategory = '';
   const themeModeClass = isUltra ? 'ultra' : isDark ? 'dark' : 'light';
 
   return (
     <ConfigProvider theme={antdThemeConfig}>
+      {messageContextHolder}
       <div
         className={`command-palette-backdrop ${themeModeClass}`}
         role="presentation"

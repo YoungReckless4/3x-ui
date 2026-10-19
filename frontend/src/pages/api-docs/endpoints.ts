@@ -91,6 +91,14 @@ const outboundSubscriptionBodyParams: EndpointParam[] = [
     optional: true,
   },
   {
+    name: 'userAgent',
+    in: 'body (form)',
+    type: 'string',
+    desc: 'Custom User-Agent sent when fetching this subscription. Defaults to "3x-ui-outbound-sub/1.0".',
+    optional: true,
+    defaultValue: '3x-ui-outbound-sub/1.0',
+  },
+  {
     name: 'updateInterval',
     in: 'body (form)',
     type: 'integer',
@@ -183,6 +191,11 @@ const subscriptionHeadResponses = {
   '500': { description: 'Subscription generation failed.' },
 };
 
+const hwidStatusErrorResponses = {
+  '404': { description: 'No enabled client matches the subscription ID. Empty body.' },
+  '500': { description: 'Database lookup failed. Empty body.' },
+};
+
 export const sections: readonly Section[] = [
   {
     id: 'authentication',
@@ -222,6 +235,13 @@ export const sections: readonly Section[] = [
         summary:
           'Mint a CSRF token for the current session. The SPA replays it in the X-CSRF-Token header on unsafe requests. Bearer-token callers can skip this — the middleware short-circuits CSRF for authenticated API requests.',
         response: '{\n  "success": true,\n  "obj": "csrf-token-string"\n}',
+      },
+      {
+        method: 'GET',
+        path: '/sponsors',
+        summary:
+          'Public. Active paid sponsor placements read from the project sponsors.json (cached for 1h); entries outside their from/until window are dropped. Logos are proxied by the panel at /sponsors/logo/{name}. Used by the login page and panel sponsor slots.',
+        responseSchema: 'SponsorList',
       },
       {
         method: 'POST',
@@ -267,7 +287,7 @@ export const sections: readonly Section[] = [
         method: 'GET',
         path: '/panel/api/inbounds/amneziawgKernelReadiness',
         summary:
-          'Whether this host can run an AmneziaWG inbound on the kernel module: root, the amneziawg module, amneziawg-tools and nftables. Returns ready plus a blockers list carrying a machine code (root/tools/module/nft/ipv6/portForwarding/routeThroughXray) so the UI can translate it, and the command that fixes them. The inbound form uses it to disable the kernel-mode toggle instead of letting a save fail.',
+          'Whether this host can run an AmneziaWG inbound on the kernel module. Returns ready, host blocker codes (root/tools/module/nft), and the command that fixes them. Saving an inbound also checks its features and rejects IPv6, port forwarding, routeThroughXray, or a pinned listen address that the kernel backend cannot honor.',
       },
       {
         method: 'GET',
@@ -311,7 +331,7 @@ export const sections: readonly Section[] = [
         method: 'POST',
         path: '/panel/api/inbounds/update/:id',
         summary:
-          'Replace an inbound’s configuration. Body shape mirrors /add. Heavy on inbounds with thousands of clients — prefer /setEnable for enable-only flips.',
+          'Replace an inbound’s configuration. Body shape mirrors /add, but the inbound keeps its stored client list and enable flag: settings.clients and enable in the body are ignored. Manage clients through the /panel/api/clients endpoints and toggle the inbound with /setEnable.',
         params: [{ name: 'id', in: 'path', type: 'number', desc: 'Inbound ID.' }],
         body: inboundBody,
       },
@@ -649,7 +669,8 @@ export const sections: readonly Section[] = [
       {
         method: 'POST',
         path: '/panel/api/server/updatePanel',
-        summary: 'Self-update the panel to the latest version. The server restarts on success.',
+        summary:
+          'Self-update the panel to the latest version. The server restarts on success. Bearer-token callers need admin or node-admin scope.',
         params: [
           {
             name: 'dev',
@@ -862,6 +883,13 @@ export const sections: readonly Section[] = [
             type: 'string',
             desc: 'Remote server as domain or domain:port (default port 443), e.g. cloudflare-dns.com.',
           },
+          {
+            name: 'allowPrivate',
+            in: 'body (form)',
+            type: 'boolean',
+            optional: true,
+            desc: 'Ping a private/internal/loopback server (LAN, Docker service name). Default false (SSRF guard blocks it and the error response sets obj.privateTarget=true).',
+          },
         ],
         body: 'server=cloudflare-dns.com',
         response: '{\n  "success": true,\n  "obj": [\n    "e8e2d3..."\n  ]\n}',
@@ -907,14 +935,14 @@ export const sections: readonly Section[] = [
         method: 'POST',
         path: '/panel/api/server/scanRealityTargets',
         summary:
-          'Probe/discover REALITY targets and return each verdict ranked by feasibility then latency. Each comma-separated token may be a domain (validated with SNI), a bare IP, or a CIDR range (discovered without SNI by reading the certificate domain). When empty, a built-in seed list is probed.',
+          'Probe/discover REALITY targets and return each verdict ranked by feasibility then latency. Each comma-separated token may be a domain (validated with SNI), a bare IP, or a CIDR range (discovered without SNI by reading the certificate domain). When empty, the realityScanCandidates setting is probed (the built-in seed list if that setting is empty).',
         params: [
           {
             name: 'targets',
             in: 'body (form)',
             type: 'string',
             optional: true,
-            desc: 'Optional comma-separated tokens: domain[:port], IP[:port], or CIDR (e.g. 104.16.0.0/24). When omitted, a built-in seed list is probed.',
+            desc: 'Optional comma-separated tokens: domain[:port], IP[:port], or CIDR (e.g. 104.16.0.0/24). When omitted, the realityScanCandidates setting is probed (the built-in seed list if that setting is empty).',
           },
         ],
         body: 'targets=104.16.0.0/24,www.apple.com:443',
@@ -1137,7 +1165,7 @@ export const sections: readonly Section[] = [
         summary:
           'Create a new client and attach it to one or more inbounds in a single call. Body is JSON. Per-protocol secrets are generated server-side when omitted, so callers can send only the universal fields.',
         description:
-          'Fields the server fills in when they are omitted — a valid value sent by the caller is never overwritten. Re-adding an email that already exists, with its stored `subId`, reuses the stored `id`, `password`, `auth` and `secret` instead of minting new ones, so the identity stays in sync across its inbounds.\n\n- **VLESS / VMess** — `id`, a fresh UUID\n- **Trojan** — `password`\n- **Shadowsocks** — `password`. On a `2022-blake3-*` inbound a supplied password that does not base64-decode to the key length of the cipher (16 or 32 bytes) is replaced by a generated key and the call still succeeds, so read the client back if you did not let the server pick. Legacy ciphers keep any non-empty password\n- **Hysteria** — `auth`\n- **mtproto** — `secret`, a FakeTLS secret derived from the fronting domain of the inbound, or from `www.cloudflare.com` when it has none\n- **WireGuard** — `privateKey` and `publicKey` when both are blank, or `publicKey` alone when only a `privateKey` was sent, plus `allowedIPs`: one free `/32` taken from the /24 the existing peers of that inbound already sit in, or from `10.0.0.0/24` when it has none\n\nAccepted on the same body but never generated: `preSharedKey` and `keepAlive` (WireGuard), `adTag` (mtproto).\n\nWireGuard is the only one of these that can fail. Allocation widens the search to the containing /16 before giving up with `inbound <id>: wireguard: no free address available in <scope>`, and an `allowedIPs` supplied by the caller is validated instead of allocated: `inbound <id>: wireguard: allowedIPs entry already used by another client: <address>` when a different client of that same inbound already holds it. The check is per inbound, so the same address on two different inbounds is accepted. The same validation runs on POST /panel/api/clients/{email}/attach, where a client that already carries an address brings it along.\n\nAn `inboundIds` entry that names no existing inbound rejects the whole call before anything is written. Past that, the inbounds are applied concurrently and independently: one that fails no longer stops the others, so a `success:false` response can still have created the client on the rest. Every error names the inbound it came from (`inbound 7: <message>`), and several failures are reported together, one per line. `limitHwid` is applied only when every inbound succeeded, so re-run the call after fixing the failure.',
+          'Fields the server fills in when they are omitted — a valid value sent by the caller is never overwritten. Re-adding an email that already exists, with its stored `subId`, reuses the stored `id`, `password`, `auth` and `secret` instead of minting new ones, so the identity stays in sync across its inbounds.\n\n- **VLESS / VMess** — `id`, a fresh UUID\n- **Trojan** — `password`\n- **Shadowsocks** — `password`. On a `2022-blake3-*` inbound a supplied password that does not base64-decode to the key length of the cipher (16 or 32 bytes) is replaced by a generated key and the call still succeeds, so read the client back if you did not let the server pick. Legacy ciphers keep any non-empty password\n- **Hysteria** — `auth`\n- **mtproto** — `secret`, a FakeTLS secret derived from the fronting domain of the inbound, or from `www.cloudflare.com` when it has none\n- **WireGuard** — `privateKey` and `publicKey` when both are blank, or `publicKey` alone when only a `privateKey` was sent, plus `allowedIPs`: one free `/32` taken from the /24 the existing peers of that inbound already sit in, or from `10.0.0.0/24` when it has none\n\nAccepted on the same body but never generated: `preSharedKey` and `keepAlive` (WireGuard), `adTag` (mtproto).\n\nWireGuard is the only one of these that can fail. Allocation widens the search to the containing /16 before giving up with `inbound <id>: wireguard: no free address available in <scope>`, and an `allowedIPs` supplied by the caller is validated instead of allocated: `inbound <id>: wireguard: allowedIPs entry <entry> overlaps <address> used by another client` when its range overlaps an address or prefix a different client of that same inbound holds, or `... used by a client on <inbound>` when the holder sits on another WireGuard or AmneziaWG inbound. Ranges are compared, not strings, so `10.0.0.9/24` collides with `10.0.0.5/32`; a `0.0.0.0/0` or `::/0` default route claims no address. Allocation likewise skips every address inside a prefix another client holds. The same validation runs on POST /panel/api/clients/{email}/attach, where a client that already carries an address brings it along.\n\nAn `inboundIds` entry that names no existing inbound rejects the whole call before anything is written. Past that, the inbounds are applied concurrently and independently: one that fails no longer stops the others, so a `success:false` response can still have created the client on the rest. Every error names the inbound it came from (`inbound 7: <message>`), and several failures are reported together, one per line. `limitHwid` is applied only when every inbound succeeded, so re-run the call after fixing the failure.',
         params: [
           {
             name: 'client',
@@ -1154,6 +1182,52 @@ export const sections: readonly Section[] = [
         ],
         body: '{\n  "client": {\n    "email": "alice@example.com",\n    "totalGB": 53687091200,\n    "expiryTime": 1735689600000,\n    "tgId": 0,\n    "limitIp": 0,\n    "limitHwid": 0,\n    "enable": true\n  },\n  "inboundIds": [3, 5]\n}',
         response: '{\n  "success": true,\n  "msg": "Client added"\n}',
+      },
+      {
+        method: 'POST',
+        path: '/panel/api/clients/renewalPreview',
+        summary: 'Preview client auto-renewal dates without saving or resetting anything.',
+        description:
+          'Uses the same calendar and catch-up calculation as auto-renew in the panel timezone. resetWeekday is 1 (Monday) to 7 (Sunday), 0 disables weekly mode; it cannot be combined with positive reset or resetDay. Existing resetDay takes precedence over reset. With expiryTime=0, calendar modes suggest a first cutoff but do not activate renewal. Negative expiryTime waits for first-use activation. resetMax and resetCount simulate the existing per-period allowance limit; the preview is informational and does not reserve an allowance or guarantee node availability.',
+        params: [
+          {
+            name: 'expiryTime',
+            in: 'body (json)',
+            type: 'integer',
+            desc: 'Current cutoff in Unix milliseconds; 0 unlimited, negative first-use duration.',
+          },
+          {
+            name: 'reset',
+            in: 'body (json)',
+            type: 'integer',
+            desc: 'Fixed interval in days; 0 disabled.',
+          },
+          {
+            name: 'resetDay',
+            in: 'body (json)',
+            type: 'integer',
+            desc: 'Monthly calendar day 1-31; 0 disabled.',
+          },
+          {
+            name: 'resetWeekday',
+            in: 'body (json)',
+            type: 'integer',
+            desc: 'Weekly calendar day 1-7 (Monday-Sunday); 0 disabled.',
+          },
+          {
+            name: 'resetMax',
+            in: 'body (json)',
+            type: 'integer',
+            desc: 'Maximum renewals; 0 unlimited.',
+          },
+          {
+            name: 'resetCount',
+            in: 'body (json)',
+            type: 'integer',
+            desc: 'Renewals already consumed; defaults to 0.',
+          },
+        ],
+        responseSchema: 'ClientRenewalPreview',
       },
       {
         method: 'POST',
@@ -1196,7 +1270,7 @@ export const sections: readonly Section[] = [
         path: '/panel/api/clients/:email/attach',
         summary: 'Attach an existing client to one or more additional inbounds. Body is JSON.',
         description:
-          'A WireGuard client brings its stored `allowedIPs` into the new inbound instead of being given a fresh address, so the call fails with `inbound <id>: wireguard: allowedIPs entry already used by another client: <address>` when a different client of the target inbound already holds it. Free the address on that inbound first — see POST /panel/api/clients/add for the full rule. Inbounds are applied independently, so the remaining ones are still attached and a `success:false` response can be partial.',
+          'A WireGuard client brings its stored `allowedIPs` into the new inbound instead of being given a fresh address, so the call fails with `inbound <id>: wireguard: allowedIPs entry <entry> overlaps <address> used by another client` when its range overlaps an address or prefix a different client of the target inbound holds. Free the address on that inbound first — see POST /panel/api/clients/add for the full rule. Inbounds are applied independently, so the remaining ones are still attached and a `success:false` response can be partial.',
         params: [
           { name: 'email', in: 'path', type: 'string', desc: 'Client email (unique identifier).' },
           {
@@ -1269,15 +1343,15 @@ export const sections: readonly Section[] = [
         method: 'GET',
         path: '/panel/api/clients/export',
         summary:
-          'Return every client as a {client, inboundIds} array — the same shape /bulkCreate and /import accept — so the payload round-trips straight back through /import. Clients with no inbound attachment are included with an empty inboundIds list. The UI shows this in a CodeMirror viewer (copy / download); programmatic callers get the array in obj.',
+          'Return every client as a {client, inboundIds, traffic} array — the shape /import accepts — so the payload round-trips straight back through /import. traffic carries the usage counters (up, down, resetCount, lastOnline, lastSubFetch) and is omitted for a client with no traffic row; the quota itself stays in client.totalGB. Clients with no inbound attachment are included with an empty inboundIds list. The UI shows this in a CodeMirror viewer (copy / download); programmatic callers get the array in obj.',
         response:
-          '{\n  "success": true,\n  "obj": [\n    {\n      "client": {\n        "email": "alice@example.com",\n        "id": "...",\n        "totalGB": 53687091200,\n        "expiryTime": 0,\n        "limitHwid": 2,\n        "enable": true,\n        "subId": "..."\n      },\n      "inboundIds": [7, 9]\n    }\n  ]\n}',
+          '{\n  "success": true,\n  "obj": [\n    {\n      "client": {\n        "email": "alice@example.com",\n        "id": "...",\n        "totalGB": 53687091200,\n        "expiryTime": 0,\n        "limitHwid": 2,\n        "enable": true,\n        "subId": "..."\n      },\n      "inboundIds": [7, 9],\n      "traffic": {\n        "up": 1048576,\n        "down": 2097152,\n        "resetCount": 0,\n        "lastOnline": 1735680000000\n      }\n    }\n  ]\n}',
       },
       {
         method: 'POST',
         path: '/panel/api/clients/import',
         summary:
-          'Import clients from a JSON body { "data": "<json>" }, where data is a string-encoded array produced by /export ([{client, inboundIds}]). Items with inboundIds are created and attached to those inbounds; items with an empty inboundIds list are restored as unattached client records. Existing emails are never overwritten — they are returned in skipped. Triggers a single Xray restart at the end if any target inbound was running.',
+          'Import clients from a JSON body { "data": "<json>" }, where data is a string-encoded array produced by /export ([{client, inboundIds, traffic}]). Items with inboundIds are created and attached to those inbounds; items with an empty inboundIds list are restored as unattached client records. An optional traffic object restores the usage counters, only for clients this import creates. Existing emails are never overwritten — they are returned in skipped, and their live counters are left untouched. Triggers a single Xray restart at the end if any target inbound was running; a failure while restoring counters still reports success=false after the clients were created.',
         body: '{\n  "data": "[{\\"client\\":{\\"email\\":\\"alice@example.com\\",\\"enable\\":true},\\"inboundIds\\":[7]}]"\n}',
         response:
           '{\n  "success": true,\n  "obj": {\n    "created": 2,\n    "skipped": [\n      { "email": "alice@example.com", "reason": "email already in use: alice@example.com" }\n    ]\n  }\n}',
@@ -1476,10 +1550,11 @@ export const sections: readonly Section[] = [
       {
         method: 'POST',
         path: '/panel/api/clients/hwids/:email',
-        summary: 'List registered HWID devices for a client. Hashes are not exposed.',
+        summary:
+          'List registered HWID devices for a client with a short fingerprint. Full hashes are not exposed.',
         params: [{ name: 'email', in: 'path', type: 'string', desc: 'Client email.' }],
         response:
-          '{\n  "success": true,\n  "obj": [\n    {\n      "id": 1,\n      "firstSeen": 1735000000000,\n      "lastSeen": 1735100000000,\n      "userAgent": "Happ/1.0",\n      "deviceOs": "android",\n      "osVersion": "15",\n      "deviceModel": "Pixel 9"\n    }\n  ]\n}',
+          '{\n  "success": true,\n  "obj": [\n    {\n      "id": 1,\n      "firstSeen": 1735000000000,\n      "lastSeen": 1735100000000,\n      "userAgent": "Happ/1.0",\n      "deviceOs": "android",\n      "osVersion": "15",\n      "deviceModel": "Pixel 9",\n      "fingerprint": "6ad17c93e821"\n    }\n  ]\n}',
       },
       {
         method: 'DELETE',
@@ -1565,6 +1640,14 @@ export const sections: readonly Section[] = [
         ],
         response:
           '{\n  "success": true,\n  "obj": [\n    "vless://uuid@host:443?security=reality&...#user1",\n    "vmess://eyJ2IjoyLC..."\n  ]\n}',
+      },
+      {
+        method: 'POST',
+        path: '/panel/api/clients/happLink/:id',
+        summary:
+          'Generate a fresh Happ crypt5 link locally from the current client subscription URL when Happ link generation is enabled. The panel applies a resource limit of 8192 UTF-8 bytes to the source URL; this is not a Happ client maximum. Longer sources return success: false with msg: happ_source_too_long and obj: null. The source URL is not sent to a generation provider, and the result is not stored or reused.',
+        params: [{ name: 'id', in: 'path', type: 'integer', desc: 'Stable client record ID.' }],
+        responseSchema: 'HappLinkResult',
       },
       {
         method: 'GET',
@@ -1902,6 +1985,12 @@ export const sections: readonly Section[] = [
         response: '{\n  "success": true,\n  "msg": "Test message sent to Telegram"\n}',
       },
       {
+        method: 'POST',
+        path: '/panel/api/setting/testDiscord',
+        summary: 'Test Discord bot connection by sending a test embed to the configured channel.',
+        response: '{\n  "success": true,\n  "msg": "Test notification sent successfully"\n}',
+      },
+      {
         method: 'GET',
         path: '/panel/api/setting/getDefaultJsonConfig',
         summary:
@@ -1914,7 +2003,7 @@ export const sections: readonly Section[] = [
     id: 'api-tokens',
     title: 'API Tokens',
     description:
-      'Manage scoped Bearer tokens for programmatic auth. Tokens grant admin, monitor, or node-sync access, may expire, and are stored as SHA-256 hashes. The plaintext is returned only once at creation.',
+      'Manage scoped Bearer tokens for programmatic auth. admin grants the full panel API; monitor is read-only for status and metrics; node-sync manages node configuration without panel updates; node-admin adds panel self-update to node-sync. Tokens may expire and are stored as SHA-256 hashes. The plaintext is returned only once at creation.',
     endpoints: [
       {
         method: 'GET',
@@ -1922,7 +2011,7 @@ export const sections: readonly Section[] = [
         summary:
           'List every API token, enabled or not. The token value is never returned — only metadata.',
         response:
-          '{\n  "success": true,\n  "obj": [\n    {\n      "id": 1,\n      "name": "default",\n      "enabled": true,\n      "createdAt": 1736000000\n    }\n  ]\n}',
+          '{\n  "success": true,\n  "obj": [\n    {\n      "id": 1,\n      "name": "central-panel-a",\n      "enabled": true,\n      "createdAt": 1736000000,\n      "scope": "node-admin",\n      "expiresAt": 0\n    }\n  ]\n}',
       },
       {
         method: 'POST',
@@ -1940,7 +2029,8 @@ export const sections: readonly Section[] = [
             name: 'scope',
             in: 'body',
             type: 'string',
-            desc: 'admin (default), monitor, or node-sync.',
+            desc: 'admin (default), monitor, node-sync, or node-admin. node-admin inherits node-sync and may also start a panel update.',
+            enum: ['admin', 'monitor', 'node-sync', 'node-admin'],
             optional: true,
           },
           {
@@ -1951,7 +2041,7 @@ export const sections: readonly Section[] = [
             optional: true,
           },
         ],
-        body: '{\n  "name": "central-panel-a",\n  "scope": "node-sync",\n  "expiresAt": 1798761600000\n}',
+        body: '{\n  "name": "central-panel-a",\n  "scope": "node-admin",\n  "expiresAt": 1798761600000\n}',
         responseSchema: 'ApiTokenView',
         errorResponse:
           '{\n  "success": false,\n  "msg": "a token with that name already exists"\n}',
@@ -2056,7 +2146,7 @@ export const sections: readonly Section[] = [
             name: 'action',
             in: 'path',
             type: 'string',
-            desc: 'data — return Warp stats. del — delete Warp data. config — return current config. reg — register (sends keys). changeIp — rotate the endpoint. license — set a Warp+ key. interval — set automatic rotation in hours.',
+            desc: 'data — return Warp stats. del — delete Warp data. config — return current config. reg — register (sends keys). regMasque — register a separate device enrolled for MASQUE and return its warp key pair, addresses and endpoint. changeIp — rotate the endpoint. license — set a Warp+ key. interval — set automatic rotation in hours.',
           },
           {
             name: 'privateKey',
@@ -2254,14 +2344,14 @@ export const sections: readonly Section[] = [
         method: 'POST',
         path: '/panel/api/xray/balancerOverride',
         summary:
-          'Force a balancer in the running core to always pick one outbound (RoutingService.OverrideBalancerTarget). Applied live without a restart; cleared automatically when Xray restarts.',
+          'Force a balancer in the running core to always pick one outbound (RoutingService.OverrideBalancerTarget). Applied live without a restart and kept across config saves; cleared when Xray restarts or the target outbound is removed.',
         params: [
           { name: 'tag', in: 'body (form)', type: 'string', desc: 'Balancer tag (required).' },
           {
             name: 'target',
             in: 'body (form)',
             type: 'string',
-            desc: 'Outbound tag to force. Empty clears the override and returns control to the strategy.',
+            desc: 'Outbound tag to force; it must exist in the running config. Empty clears the override and returns control to the strategy.',
             optional: true,
           },
         ],
@@ -2504,6 +2594,13 @@ export const sections: readonly Section[] = [
             desc: 'Subscription URL to preview (required).',
           },
           {
+            name: 'userAgent',
+            in: 'body (form)',
+            type: 'string',
+            desc: 'Custom User-Agent sent while fetching the preview.',
+            optional: true,
+          },
+          {
             name: 'allowPrivate',
             in: 'body (form)',
             type: 'boolean',
@@ -2623,6 +2720,35 @@ export const sections: readonly Section[] = [
           'Return the same status and subscription metadata headers as GET without a response body.',
         params: [{ name: 'subid', in: 'path', type: 'string', desc: 'Client subscription ID.' }],
         responses: subscriptionHeadResponses,
+      },
+      {
+        method: 'GET',
+        path: '/{subPath}:subid/hwid-status',
+        summary:
+          'Return aggregate HWID device-slot usage for the subscription: whether an HWID limit is active, the limit, how many devices are registered and how many slots remain. Read-only — it never registers a device, so asking does not consume a slot. Counters only: no HWID value, email or device metadata. The path prefix is configured by subPath.',
+        description:
+          'Responds with the bare HwidSlotStatus object, not the <code>{success,msg,obj}</code> panel envelope, like the other subscription-server routes. With no HWID limit configured, <code>active</code> is false and every counter is 0.',
+        params: [{ name: 'subid', in: 'path', type: 'string', desc: 'Client subscription ID.' }],
+        responses: {
+          '200': {
+            description: 'Device-slot counters for the subscription.',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/HwidSlotStatus' } },
+            },
+          },
+          ...hwidStatusErrorResponses,
+        },
+      },
+      {
+        method: 'HEAD',
+        path: '/{subPath}:subid/hwid-status',
+        summary:
+          'Return the HWID device-slot status code and headers as GET without a response body.',
+        params: [{ name: 'subid', in: 'path', type: 'string', desc: 'Client subscription ID.' }],
+        responses: {
+          '200': { description: 'Headers match GET; no response body.' },
+          ...hwidStatusErrorResponses,
+        },
       },
       {
         method: 'GET',

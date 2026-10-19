@@ -9,11 +9,10 @@ import "strings"
 // installs (>32k clients) where even modern SQLite would refuse a single IN.
 const sqliteMaxVars = 900
 
-// normalizeSubSortIndex clamps the 1-based subscription sort order. Values
-// below 1 arrive from clients that predate the field (omitted form key binds
-// to 0) and must not sort ahead of explicitly ranked inbounds.
+// normalizeSubSortIndex maps omitted/zero to 1; explicit negatives are kept
+// so a primary inbound can sort ahead of the default.
 func normalizeSubSortIndex(v int) int {
-	if v < 1 {
+	if v == 0 {
 		return 1
 	}
 	return v
@@ -73,7 +72,7 @@ func chunkStrings(s []string, size int) [][]string {
 	if size <= 0 || len(s) == 0 {
 		return nil
 	}
-	out := make([][]string, 0, (len(s)+size-1)/size)
+	out := make([][]string, 0, chunkCount(len(s), size))
 	for i := 0; i < len(s); i += size {
 		end := min(i+size, len(s))
 		out = append(out, s[i:end])
@@ -87,10 +86,19 @@ func chunkInts(s []int, size int) [][]int {
 	if size <= 0 || len(s) == 0 {
 		return nil
 	}
-	out := make([][]int, 0, (len(s)+size-1)/size)
+	out := make([][]int, 0, chunkCount(len(s), size))
 	for i := 0; i < len(s); i += size {
 		end := min(i+size, len(s))
 		out = append(out, s[i:end])
 	}
 	return out
+}
+
+// chunkCount is ceil(n/size) without the n+size-1 sum, which overflows for a size near MaxInt.
+func chunkCount(n, size int) int {
+	count := n / size
+	if n%size != 0 {
+		count++
+	}
+	return count
 }

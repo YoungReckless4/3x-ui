@@ -15,8 +15,8 @@ import (
 // endpointResolveTimeout bounds the one-time DNS lookup in ParseEndpoint.
 const endpointResolveTimeout = 5 * time.Second
 
-// resolvingBind lets peer endpoints be hostnames: StdNetBind has no DNS and
-// an unresolved name kills the whole IpcSet. Resolved once at configure.
+// resolvingBind wraps a Bind so peer endpoints may be hostnames (#6367).
+// Concrete listen values use pinnedBind; wildcards keep StdNetBind.
 type resolvingBind struct {
 	awgconn.Bind
 }
@@ -35,12 +35,12 @@ func defaultLookupEndpointHost(ctx context.Context, host string) ([]netip.Addr, 
 	return out, nil
 }
 
-func newResolvingBind() *resolvingBind {
-	return &resolvingBind{Bind: awgconn.NewDefaultBind()}
+func newResolvingBind(listen string) *resolvingBind {
+	return &resolvingBind{Bind: newListenBind(listen)}
 }
 
-// ParseEndpoint resolves hostnames before handing the address to amneziawg-go
-// (whose own implementation accepts literal IPs only).
+// ParseEndpoint resolves hostnames, then lets the wrapped bind build the endpoint:
+// its own parser takes literal IPs only, and WinRingBind sends to its own type only.
 func (b *resolvingBind) ParseEndpoint(s string) (awgconn.Endpoint, error) {
 	host, portStr, err := net.SplitHostPort(strings.TrimSpace(s))
 	if err != nil {
@@ -63,5 +63,5 @@ func (b *resolvingBind) ParseEndpoint(s string) (awgconn.Endpoint, error) {
 		}
 		addr = addrs[0]
 	}
-	return &awgconn.StdNetEndpoint{AddrPort: netip.AddrPortFrom(addr.Unmap(), uint16(port64))}, nil
+	return b.Bind.ParseEndpoint(netip.AddrPortFrom(addr.Unmap(), uint16(port64)).String())
 }

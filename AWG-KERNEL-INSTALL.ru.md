@@ -94,14 +94,16 @@ curl -o /dev/null -w '%{http_code}\n' \
 требует cgo и компилятора под целевую платформу. Собирайте на Linux — проще
 всего прямо на целевом сервере.
 
-> **Откуда брать код.** Ветка `feat/awg-kernel-backend-v2` собрана поверх
-> актуального `main` и пока лежит только локально. Чтобы клонировать её на
+> **Откуда брать код.** Ветка `feat/awg-kernel-backend-v2` содержит ядровой
+> режим и актуальные изменения `main`; пока она лежит только локально. Чтобы клонировать её на
 > сервер, сначала запушьте её в форк:
 > `git push fork feat/awg-kernel-backend-v2`.
 >
 > Если публиковать ветку не хочется — пропустите §4.1–4.2 и скопируйте готовый
-> бинарь (`scp`), затем переходите к §4.3. Он собран из коммита `4243b63` в
-> `golang:1.27-bookworm` командами из §4.2:
+> бинарь (`scp`), затем переходите к §4.3. Это исторический бинарь из коммита
+> `4243b63`, собранный до обновления ветки до актуального `main`; он не содержит
+> последующие изменения upstream. Хэш подтверждает только этот старый бинарь,
+> а не текущий исходный код:
 >
 > ```
 > размер   72 270 160 байт
@@ -118,20 +120,20 @@ curl -o /dev/null -w '%{http_code}\n' \
 apt-get update
 apt-get install -y build-essential git curl ca-certificates
 
-# Node 24 — нужен для сборки фронтенда
-curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
+# Node 26 — нужен для сборки фронтенда
+curl -fsSL https://deb.nodesource.com/setup_26.x | bash -
 apt-get install -y nodejs
 
-# Go 1.27.1+ — в репозиториях Debian 13 версия старее, берём с go.dev
-GO_TARBALL=go1.27.1.linux-amd64.tar.gz      # сверьтесь с https://go.dev/dl/
+# Go 1.27.2+ — в репозиториях Debian 13 версия старее, берём с go.dev
+GO_TARBALL=go1.27.2.linux-amd64.tar.gz      # сверьтесь с https://go.dev/dl/
 curl -fLO "https://go.dev/dl/${GO_TARBALL}"
 rm -rf /usr/local/go && tar -C /usr/local -xzf "${GO_TARBALL}"
 export PATH=/usr/local/go/bin:$PATH
 
-go version && node --version                # go1.27.1+, v24.x
+go version && node --version                # go1.27.2+, v26.x
 ```
 
-`go.mod` требует ровно `go >= 1.27.1`; более старый Go остановится на этой
+`go.mod` требует ровно `go >= 1.27.2`; более старый Go остановится на этой
 строке ещё до компиляции.
 
 ### 4.2 Сборка

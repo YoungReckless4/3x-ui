@@ -316,6 +316,22 @@ func (p *Process) SetConfig(config *Config) {
 	p.config = config
 }
 
+// PersistConfig writes the current configuration snapshot to the config file,
+// keeping it in step after a hot apply (Start only writes it on a cold start).
+func (p *Process) PersistConfig() error {
+	p.mu.RLock()
+	data, err := json.MarshalIndent(p.config, "", "  ")
+	path := p.configPath
+	p.mu.RUnlock()
+	if err != nil {
+		return common.NewErrorf("Failed to generate XRAY configuration files: %v", err)
+	}
+	if path == "" {
+		path = GetConfigPath()
+	}
+	return writeFileAtomic(path, data, 0o600)
+}
+
 // GetOnlineClients returns the union of locally-online clients and
 // node-online clients from every registered remote panel. Dedupes by
 // email so a client connected to both a local and a node-managed inbound
@@ -538,6 +554,23 @@ func (p *Process) ClearNodeOnlineClients(nodeID int) {
 	delete(p.nodeActiveInboundTrees, nodeID)
 }
 
+// RetainNodeOnlineClients drops the subtree of every direct node keep rejects: nodes
+// the master stopped syncing without a failed probe (disabled, offline, deleted).
+func (p *Process) RetainNodeOnlineClients(keep func(nodeID int) bool) {
+	p.onlineMu.Lock()
+	defer p.onlineMu.Unlock()
+	for nodeID := range p.nodeOnlineTrees {
+		if !keep(nodeID) {
+			delete(p.nodeOnlineTrees, nodeID)
+		}
+	}
+	for nodeID := range p.nodeActiveInboundTrees {
+		if !keep(nodeID) {
+			delete(p.nodeActiveInboundTrees, nodeID)
+		}
+	}
+}
+
 // GetUptime returns the uptime of the Xray process in seconds.
 func (p *Process) GetUptime() uint64 {
 	return uint64(time.Since(p.startTime).Seconds())
@@ -701,6 +734,7 @@ func (p *process) waitForCommand(cmd *exec.Cmd, done chan struct{}) {
 	defer close(done)
 
 	err := cmd.Wait()
+	p.logWriter.Flush()
 	if err == nil || p.intentionalStop.Load() {
 		return
 	}
@@ -797,17 +831,27 @@ const (
 	maxCrashReports   = 10
 )
 
-// writeCrashReport persists a captured xray crash chunk to the log folder
-// with nanosecond-precision filename so restart-loop bursts don't overwrite
-// each other, and prunes old reports to keep the folder bounded.
+// writeCrashReport persists a captured xray crash to the log folder; CreateTemp's
+// random suffix keeps restart-loop bursts within one second from overwriting each other.
 func writeCrashReport(m []byte) error {
 	dir := config.GetLogFolder()
 	if err := os.MkdirAll(dir, 0o770); err != nil {
 		return err
 	}
 	pruneOldCrashReports(dir, maxCrashReports-1)
-	name := crashReportPrefix + time.Now().Format("20060102_150405_000000000") + crashReportSuffix
-	return os.WriteFile(filepath.Join(dir, name), m, 0o640)
+	pattern := crashReportPrefix + time.Now().Format("20060102_150405") + "_*" + crashReportSuffix
+	f, err := os.CreateTemp(dir, pattern)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(m)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(f.Name(), 0o640)
+	}
+	return err
 }
 
 func pruneOldCrashReports(dir string, keep int) {
