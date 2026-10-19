@@ -20,7 +20,7 @@
 This repository is the public **[YoungReckless4/3x-ui fork](https://github.com/YoungReckless4/3x-ui)** of [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui), which remains the upstream project. It retains the upstream GPL-3.0 license and attribution. Fork-specific changes, including the optional AmneziaWG kernel backend, are documented below.
 
 > [!NOTE]
-> This fork is a preview pending server testing. It does not yet have published fork release artifacts. The `dev-latest` instructions below become available after the first fork preview build is published.
+> This fork is in preview. A module and panel upgrade, followed by a panel restart with an active kernel-mode AmneziaWG interface and traffic accounting, was validated on Debian 13 x86_64 with XanMod 7.1.11. This covers one host and scenario; other kernel-mode scenarios and architectures have not been verified, and the kernel backend is not supported in Docker. Fork release artifacts are not published yet; the `dev-latest` instructions below become available after the first preview build is published.
 
 > [!IMPORTANT]
 > This project is intended for personal use only. Please do not use it for illegal purposes or in a production environment.
