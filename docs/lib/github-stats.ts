@@ -6,12 +6,10 @@ export interface GitHubStats {
   latestVersion: string;
 }
 
-// Real, recent numbers used as a fallback when the GitHub API is unavailable
-// at build time (offline CI, rate limit). Update periodically.
 const FALLBACK: GitHubStats = {
-  stars: 41500,
-  forks: 7700,
-  latestVersion: 'v3.x',
+  stars: 0,
+  forks: 0,
+  latestVersion: 'not published',
 };
 
 const API_BASE = `https://api.github.com/repos/${productRepo.user}/${productRepo.repo}`;

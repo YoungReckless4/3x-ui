@@ -14,7 +14,7 @@ import { OutputBlock } from './shared/output-block';
 
 export function InstallCommandBuilder() {
   const [method, setMethod] = useState<InstallMethod>('script');
-  const [version, setVersion] = useState('');
+  const [version, setVersion] = useState('dev-latest');
   const [enableFail2ban, setEnableFail2ban] = useState(true);
   const [panelPort, setPanelPort] = useState('');
   const [webBasePath, setWebBasePath] = useState('');
@@ -43,8 +43,8 @@ export function InstallCommandBuilder() {
           label="Version"
           value={version}
           onChange={setVersion}
-          placeholder="latest"
-          hint="blank = latest stable · a tag like v3.4.0 · or dev-latest for the rolling dev build"
+          placeholder="dev-latest"
+          hint="dev-latest = fork preview · a version tag is available after a fork release"
         />
         {method === 'docker' ? (
           <>

@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install 3x-ui via the official script (stable, pinned, or dev-latest), unattended/cloud-init, or Docker — and choose SQLite or PostgreSQL.
+description: Install the YoungReckless4 fork preview, use Docker, or install manually — and choose SQLite or PostgreSQL.
 icon: Download
 ---
 
@@ -14,29 +14,25 @@ across `amd64`, `386`, `arm64`, `armv7`, `armv6`, `armv5`, and `s390x`.
   sets up the `x-ui` management command, and enables the panel on boot.
 </Callout>
 
+<Callout type="info">
+  This is the YoungReckless4 fork of MHSanaei/3x-ui and retains its GPL-3.0
+  attribution. The fork is in preview pending server testing; no fork release
+  artifacts are published yet. Install instructions use the `dev-latest`
+  channel after its first preview build is published.
+</Callout>
+
 <Tabs items={['Script', 'Docker', 'Manual']}>
 
 <Tab value="Script">
 
-The official script is the recommended path. During installation it generates a
+The fork script is the recommended preview path. During installation it generates a
 **random** username, password, and access (web base) path, sets up the service,
 and installs the `x-ui` management command.
 
-```bash title="latest stable"
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
-```
-
-Install a **specific version** by appending its tag:
-
-```bash title="pinned version"
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) v3.4.0
-```
-
-Install the rolling **dev** build (the latest per-commit pre-release from `main`
-— not a stable release) by passing `dev-latest`:
+Install the rolling **Dev** preview build from this fork's `main` branch:
 
 ```bash title="rolling dev build"
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) dev-latest
+bash <(curl -Ls https://raw.githubusercontent.com/YoungReckless4/3x-ui/main/install.sh) dev-latest
 ```
 
 When it finishes, note the printed login details and run `x-ui` to open the
@@ -61,8 +57,9 @@ lines in `docker-compose.yml` and start with the profile:
 docker compose --profile postgres up -d
 ```
 
-Prefer the prebuilt image? It's published to the GitHub Container Registry. The
-image bundles Fail2ban (for [IP limits](/docs/operations/security)), which bans
+Fork Docker image artifacts are not published yet; a tagged fork release will
+publish them to the GitHub Container Registry. The image bundles Fail2ban (for
+[IP limits](/docs/operations/security)), which bans
 with `iptables` and therefore needs `NET_ADMIN` (and `NET_RAW` for IPv6) —
 otherwise bans are logged but never applied:
 
@@ -76,10 +73,12 @@ docker run -d \
   --network=host \
   --restart=unless-stopped \
   --name 3x-ui \
-  ghcr.io/mhsanaei/3x-ui:latest
+ghcr.io/youngreckless4/3x-ui:latest
 ```
 
-The `db/` volume holds the SQLite database (`/etc/x-ui/x-ui.db`) and `cert/`
+Fork Docker images will be published after a release workflow is run. Docker
+uses embedded AmneziaWG; the optional kernel backend requires a host kernel
+module and is not supported in the container. The `db/` volume holds the SQLite database (`/etc/x-ui/x-ui.db`) and `cert/`
 holds TLS certificates, so your data survives upgrades.
 
 </Tab>
@@ -87,7 +86,7 @@ holds TLS certificates, so your data survives upgrades.
 <Tab value="Manual">
 
 For advanced users, download a release archive for your architecture from the
-[releases page](https://github.com/MHSanaei/3x-ui/releases), extract it, and run
+[fork releases page](https://github.com/YoungReckless4/3x-ui/releases), extract it, and run
 the binary as a systemd service. The install script automates exactly these
 steps, so it's preferred unless you have a specific reason to install by hand.
 
@@ -120,10 +119,10 @@ prompts, generating random credentials and writing them to
 `/etc/x-ui/install-result.env`:
 
 ```bash
-XUI_NONINTERACTIVE=1 bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
+XUI_NONINTERACTIVE=1 bash <(curl -Ls https://raw.githubusercontent.com/YoungReckless4/3x-ui/main/install.sh) dev-latest
 ```
 
-The repo's [`deploy/`](https://github.com/MHSanaei/3x-ui/tree/main/deploy)
+The repo's [`deploy/`](https://github.com/YoungReckless4/3x-ui/tree/main/deploy)
 directory has ready-made **cloud-init** user-data for unattended installs on any
 cloud (Hetzner, AWS, DigitalOcean, Vultr, GCP, Azure, Oracle).
 

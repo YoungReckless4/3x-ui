@@ -60,6 +60,17 @@ mokutil --sb-state 2>/dev/null || echo "mokutil нет — Secure Boot скор�
 шестью geo-файлами `.dat` и `mtg-linux-*`, systemd-юнит, `/etc/x-ui/` под базу и
 `/usr/bin/x-ui` (управляющий скрипт).
 
+После публикации первой предварительной сборки форка можно установить её
+напрямую из канала Dev:
+
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/YoungReckless4/3x-ui/main/install.sh) dev-latest
+```
+
+На момент подготовки этого руководства fork-релиз ещё не опубликован. До его
+появления приведённая ниже команда апстрима может использоваться только как
+базовая установка ресурсов; бинарь форка нужно собрать из исходников по §4.
+
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/MHSanaei/3x-ui/main/install.sh)
 ```

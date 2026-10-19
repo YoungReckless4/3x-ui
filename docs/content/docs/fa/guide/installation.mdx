@@ -1,8 +1,11 @@
 ---
 title: نصب
-description: نصب 3x-ui با اسکریپت رسمی (نسخهٔ پایدار، نسخهٔ مشخص یا dev-latest)، نصب خودکار/cloud-init یا Docker — و انتخاب میان SQLite و PostgreSQL.
+description: پیش‌نمایش fork YoungReckless4 را نصب کنید یا از Docker استفاده کنید — و SQLite یا PostgreSQL را انتخاب کنید.
 icon: Download
 ---
+
+> Fork notice: this YoungReckless4 fork is a preview pending server testing and
+> has no published release artifacts yet. See the [English installation guide](/docs/guide/installation) for current fork instructions.
 
 ‏3x-ui روی طیف گسترده‌ای از توزیع‌های Linux اجرا می‌شود — Ubuntu، Debian، Armbian،
 Fedora، CentOS، RHEL، AlmaLinux، Rocky Linux، Oracle Linux، Amazon Linux،
@@ -19,25 +22,12 @@ Virtuozzo، Arch، Manjaro، openSUSE (Tumbleweed/Leap)، Alpine — و همچن
 
 <Tab value="Script">
 
-اسکریپت رسمی مسیر توصیه‌شده است. این اسکریپت در طول نصب یک نام کاربری، رمز عبور و
+اسکریپت fork مسیر پیش‌نمایش توصیه‌شده است. این اسکریپت در طول نصب یک نام کاربری، رمز عبور و
 مسیر دسترسی (مسیر پایهٔ وب) **تصادفی** تولید می‌کند، سرویس را راه‌اندازی می‌کند و
 دستور مدیریتی `x-ui` را نصب می‌کند.
 
-```bash title="latest stable"
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
-```
-
-برای نصب یک **نسخهٔ مشخص**، تگ آن را در انتها اضافه کنید:
-
-```bash title="pinned version"
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) v3.4.0
-```
-
-برای نصب نسخهٔ **dev** غلتان (آخرین پیش‌انتشار به‌ازای هر کامیت از شاخهٔ `main`
-— نه یک نسخهٔ پایدار) عبارت `dev-latest` را پاس دهید:
-
-```bash title="rolling dev build"
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) dev-latest
+```bash title="fork dev preview"
+bash <(curl -Ls https://raw.githubusercontent.com/YoungReckless4/3x-ui/main/install.sh) dev-latest
 ```
 
 پس از پایان نصب، مشخصات ورود چاپ‌شده را یادداشت کنید و دستور `x-ui` را اجرا کنید تا
@@ -62,8 +52,8 @@ docker compose up -d
 docker compose --profile postgres up -d
 ```
 
-ترجیح می‌دهید از ایمیج از‌پیش‌ساخته استفاده کنید؟ این ایمیج روی GitHub Container Registry
-منتشر شده است. این ایمیج Fail2ban را به‌همراه دارد (برای [محدودیت‌های IP](/docs/operations/security))
+ایمیج Docker فورک هنوز منتشر نشده است. پس از انتشار یک نسخه، ایمیج در GitHub Container Registry
+قرار می‌گیرد. این ایمیج Fail2ban را به‌همراه دارد (برای [محدودیت‌های IP](/docs/operations/security))
 که با `iptables` مسدودسازی انجام می‌دهد و بنابراین به `NET_ADMIN` (و `NET_RAW` برای IPv6)
 نیاز دارد — در غیر این صورت مسدودسازی‌ها فقط ثبت می‌شوند ولی هرگز اعمال نمی‌شوند:
 
@@ -77,7 +67,7 @@ docker run -d \
   --network=host \
   --restart=unless-stopped \
   --name 3x-ui \
-  ghcr.io/mhsanaei/3x-ui:latest
+  ghcr.io/youngreckless4/3x-ui:latest
 ```
 
 والیوم `db/` پایگاه‌دادهٔ SQLite (`/etc/x-ui/x-ui.db`) را نگه می‌دارد و `cert/`
@@ -87,8 +77,8 @@ docker run -d \
 
 <Tab value="Manual">
 
-برای کاربران پیشرفته، یک آرشیو انتشار متناسب با معماری خود را از
-[صفحهٔ releases](https://github.com/MHSanaei/3x-ui/releases) دانلود کنید، آن را
+پس از انتشار اولین نسخهٔ فورک، کاربران پیشرفته می‌توانند آرشیو متناسب با معماری خود را از
+[صفحهٔ releases](https://github.com/YoungReckless4/3x-ui/releases) دانلود کنید، آن را
 استخراج کنید و باینری را به‌عنوان یک سرویس systemd اجرا کنید. اسکریپت نصب دقیقاً
 همین مراحل را خودکار می‌کند، بنابراین مگر اینکه دلیل خاصی برای نصب دستی داشته
 باشید، روش اسکریپتی ترجیح داده می‌شود.
@@ -122,10 +112,10 @@ docker run -d \
 `/etc/x-ui/install-result.env` بنویسد:
 
 ```bash
-XUI_NONINTERACTIVE=1 bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
+XUI_NONINTERACTIVE=1 bash <(curl -Ls https://raw.githubusercontent.com/YoungReckless4/3x-ui/main/install.sh) dev-latest
 ```
 
-دایرکتوری [`deploy/`](https://github.com/MHSanaei/3x-ui/tree/main/deploy) در مخزن
+دایرکتوری [`deploy/`](https://github.com/YoungReckless4/3x-ui/tree/main/deploy) در مخزن
 یک user-data آمادهٔ **cloud-init** برای نصب‌های خودکار روی هر ابری (Hetzner، AWS،
 DigitalOcean، Vultr، GCP، Azure، Oracle) دارد.
 

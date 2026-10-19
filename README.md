@@ -8,10 +8,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MHSanaei/3x-ui/releases"><img src="https://img.shields.io/github/v/release/mhsanaei/3x-ui" alt="Release"></a>
-  <a href="https://github.com/MHSanaei/3x-ui/actions"><img src="https://img.shields.io/github/actions/workflow/status/mhsanaei/3x-ui/release.yml.svg" alt="Build"></a>
+  <a href="https://github.com/YoungReckless4/3x-ui/actions"><img src="https://img.shields.io/github/actions/workflow/status/YoungReckless4/3x-ui/release.yml.svg" alt="Build"></a>
   <a href="#"><img src="https://img.shields.io/github/go-mod/go-version/mhsanaei/3x-ui.svg" alt="GO Version"></a>
-  <a href="https://github.com/MHSanaei/3x-ui/releases/latest"><img src="https://img.shields.io/github/downloads/mhsanaei/3x-ui/total.svg" alt="Downloads"></a>
   <a href="https://www.gnu.org/licenses/gpl-3.0.en.html"><img src="https://img.shields.io/badge/license-GPL%20V3-blue.svg?longCache=true" alt="License"></a>
   <a href="https://pkg.go.dev/github.com/mhsanaei/3x-ui/v3"><img src="https://pkg.go.dev/badge/github.com/mhsanaei/3x-ui/v3.svg" alt="Go Reference"></a>
   <a href="https://docs.sanaei.dev"><img src="https://img.shields.io/badge/docs-docs.sanaei.dev-22d3ee" alt="Documentation"></a>
@@ -19,7 +17,10 @@
 
 **3X-UI** is an advanced, open-source web control panel for managing [Xray-core](https://github.com/XTLS/Xray-core) servers. It provides a clean, multi-language interface for deploying, configuring, and monitoring a wide range of proxy and VPN protocols — from a single VPS to multi-node deployments.
 
-Built as an enhanced fork of the original X-UI project, 3X-UI adds broader protocol support, improved stability, per-client traffic accounting, and many quality-of-life features.
+This repository is the public **[YoungReckless4/3x-ui fork](https://github.com/YoungReckless4/3x-ui)** of [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui), which remains the upstream project. It retains the upstream GPL-3.0 license and attribution. Fork-specific changes, including the optional AmneziaWG kernel backend, are documented below.
+
+> [!NOTE]
+> This fork is a preview pending server testing. It does not yet have published fork release artifacts. The `dev-latest` instructions below become available after the first fork preview build is published.
 
 > [!IMPORTANT]
 > This project is intended for personal use only. Please do not use it for illegal purposes or in a production environment.
@@ -28,7 +29,7 @@ Built as an enhanced fork of the original X-UI project, 3X-UI adds broader proto
 
 - **Multi-protocol inbounds** — VLESS, VMess, Trojan, Shadowsocks, WireGuard, AmneziaWG, TUIC v5, Hysteria2, MTProto, HTTP, SOCKS (Mixed), Dokodemo-door / Tunnel, and TUN.
 - **Modern transports & security** — TCP (Raw), mKCP, WebSocket, gRPC, HTTPUpgrade, and XHTTP, secured with TLS, XTLS, and REALITY.
-- **AmneziaWG built in** — DPI-resistant WireGuard runs inside the panel on a userspace network stack, with no kernel module, DKMS, or extra packages to install.
+- **AmneziaWG built in** — DPI-resistant WireGuard uses the embedded userspace network stack by default, with no kernel module or DKMS. An opt-in kernel backend is available for tested Debian 13 hosts; it requires a separately installed kernel module and is not supported in Docker. See [kernel backend setup](AWG-KERNEL-INSTALL.ru.md).
 - **Native TUIC v5 server** — In-process Go QUIC server with Xray routing and per-client traffic accounting; BBR and New Reno are available server-side. CUBIC is preserved in the client profile but currently falls back to New Reno on the server.
 - **MTProto proxies** — per-client FakeTLS secrets, ad-tags, and quotas, applied live without dropping existing connections.
 - **Fallbacks** — serve multiple protocols on a single port (e.g. VLESS and Trojan on 443) using Xray's fallback support.
@@ -73,27 +74,19 @@ Built as an enhanced fork of the original X-UI project, 3X-UI adds broader proto
 
 ## Quick Start
 
-```bash
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
-```
-
-To install a specific version, append its tag (e.g. `v3.7.0`):
+Install the rolling **Dev** preview build from this fork (latest pre-release built from its `main` branch):
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) v3.7.0
+bash <(curl -Ls https://raw.githubusercontent.com/YoungReckless4/3x-ui/main/install.sh) dev-latest
 ```
 
-To install the rolling **dev** build (latest per-commit pre-release from `main`, not a stable release), pass `dev-latest`:
-
-```bash
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) dev-latest
-```
+Fork releases are not published yet. Stable version tags and release downloads will be available here after the first release; use the Dev channel only once the preview build appears on the [fork Releases page](https://github.com/YoungReckless4/3x-ui/releases).
 
 During installation a random username, password, and access path are generated. After installation, run `x-ui` to open the management menu, where you can start/stop the service, view or reset your login credentials, manage SSL certificates, and more.
 
-Every release asset is published with a `.sha256` sum next to it. Both `install.sh` and the updater verify the archive against that sum and abort on a mismatch.
+The upstream release assets include `.sha256` sums. Fork release assets will use the same verification when published.
 
-For full documentation — installation, configuration, operations, and the complete API reference — visit **[docs.sanaei.dev](https://docs.sanaei.dev)**.
+Fork-specific installation and kernel backend instructions are maintained in this repository. For general 3X-UI behavior, see the [upstream documentation](https://docs.sanaei.dev).
 
 ### Unattended install
 
@@ -143,11 +136,13 @@ The default `docker compose up -d` keeps using SQLite. To run with the bundled P
 docker compose --profile postgres up -d
 ```
 
-The image bundles Fail2ban (enabled by default) to enforce per-client **IP limits**. Fail2ban bans offenders with `iptables`, which requires the `NET_ADMIN` capability. `docker-compose.yml` already grants it via `cap_add`; if you start the container with `docker run` instead, add the capabilities yourself, otherwise bans are logged but never applied:
+Fork Docker image artifacts are not published yet; this command applies after the first fork image is available. The image bundles Fail2ban (enabled by default) to enforce per-client **IP limits**. Fail2ban bans offenders with `iptables`, which requires the `NET_ADMIN` capability. `docker-compose.yml` already grants it via `cap_add`; if you start the container with `docker run` instead, add the capabilities yourself, otherwise bans are logged but never applied:
 
 ```bash
-docker run -d --cap-add=NET_ADMIN --cap-add=NET_RAW ... ghcr.io/mhsanaei/3x-ui
+docker run -d --cap-add=NET_ADMIN --cap-add=NET_RAW ... ghcr.io/youngreckless4/3x-ui:latest
 ```
+
+Docker images use the embedded AmneziaWG backend; kernel mode requires a host kernel module and is not available in the container image.
 
 ## Environment Variables
 
@@ -214,7 +209,7 @@ Tools and integrations built by the community around 3x-ui.
    <img src="./media/donation-button-black.svg" alt="Crypto donation button by NOWPayments">
 </a>
 
-## Star History
+## Upstream Star History
 
 <a href="https://www.star-history.com/?repos=mhsanaei%2F3x-ui&type=date&legend=top-left">
  <picture>

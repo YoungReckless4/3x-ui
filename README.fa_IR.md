@@ -7,6 +7,8 @@
   </picture>
 </p>
 
+> **Fork notice:** This is the YoungReckless4 fork of MHSanaei/3x-ui. For current fork installation instructions and preview status, see the [English README](README.md).
+
 <p align="center">
   <a href="https://github.com/MHSanaei/3x-ui/releases"><img src="https://img.shields.io/github/v/release/mhsanaei/3x-ui" alt="Release"></a>
   <a href="https://github.com/MHSanaei/3x-ui/actions"><img src="https://img.shields.io/github/actions/workflow/status/mhsanaei/3x-ui/release.yml.svg" alt="Build"></a>

@@ -40,8 +40,16 @@ type PanelUpdateInfo struct {
 	UpdateAvailable bool   `json:"updateAvailable"`
 }
 
+var (
+	panelGitHubRepo       = "YoungReckless4/3x-ui"
+	panelGitHubAPIBaseURL = "https://api.github.com"
+	panelGitHubRawBaseURL = "https://raw.githubusercontent.com"
+	newPanelHTTPClient    = func(timeout time.Duration) *http.Client {
+		return (&service.SettingService{}).NewProxiedHTTPClient(timeout)
+	}
+)
+
 const (
-	panelUpdaterURL      = "https://raw.githubusercontent.com/MHSanaei/3x-ui/main/update.sh"
 	maxPanelUpdaterBytes = 2 << 20
 	// devReleaseTag is the fixed-tag rolling pre-release the CI force-moves to the
 	// newest main commit; the dev update channel installs from it.
@@ -373,8 +381,8 @@ func releaseUpdateSlot() {
 }
 
 func downloadPanelUpdater() (string, error) {
-	client := (&service.SettingService{}).NewProxiedHTTPClient(15 * time.Second)
-	req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodGet, panelUpdaterURL, nil)
+	client := newPanelHTTPClient(15 * time.Second)
+	req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodGet, panelUpdaterURL(), nil)
 	if reqErr != nil {
 		return "", fmt.Errorf("download panel updater: %w", reqErr)
 	}
@@ -431,11 +439,11 @@ func fetchLatestPanelVersion() (string, error) {
 // fetchPanelRelease fetches a release from GitHub. An empty tag resolves the
 // latest stable release; a non-empty tag (e.g. dev-latest) resolves that tag.
 func fetchPanelRelease(tag string) (*service.Release, error) {
-	url := "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest"
+	url := strings.TrimRight(panelGitHubAPIBaseURL, "/") + "/repos/" + panelGitHubRepo + "/releases/latest"
 	if tag != "" {
-		url = "https://api.github.com/repos/MHSanaei/3x-ui/releases/tags/" + tag
+		url = strings.TrimRight(panelGitHubAPIBaseURL, "/") + "/repos/" + panelGitHubRepo + "/releases/tags/" + tag
 	}
-	client := (&service.SettingService{}).NewProxiedHTTPClient(10 * time.Second)
+	client := newPanelHTTPClient(10 * time.Second)
 	req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if reqErr != nil {
 		return nil, reqErr
@@ -454,6 +462,10 @@ func fetchPanelRelease(tag string) (*service.Release, error) {
 		return nil, err
 	}
 	return &release, nil
+}
+
+func panelUpdaterURL() string {
+	return strings.TrimRight(panelGitHubRawBaseURL, "/") + "/" + panelGitHubRepo + "/main/update.sh"
 }
 
 // extractReleaseCommit reads the build commit recorded in the dev release: first

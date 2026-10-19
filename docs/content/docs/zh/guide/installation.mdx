@@ -1,8 +1,11 @@
 ---
 title: 安装
-description: 通过官方脚本（稳定版、指定版本或开发最新版）、无人值守 / cloud-init 或 Docker 安装 3x-ui，并选择 SQLite 或 PostgreSQL。
+description: 安装 YoungReckless4 fork 预览版或使用 Docker，并选择 SQLite 或 PostgreSQL。
 icon: Download
 ---
+
+> Fork notice: this YoungReckless4 fork is a preview pending server testing and
+> has no published release artifacts yet. See the [English installation guide](/docs/guide/installation) for current fork instructions.
 
 3x-ui 可运行在多种 Linux 发行版上——Ubuntu、Debian、Armbian、
 Fedora、CentOS、RHEL、AlmaLinux、Rocky Linux、Oracle Linux、Amazon Linux、
@@ -18,24 +21,11 @@ Virtuozzo、Arch、Manjaro、openSUSE（Tumbleweed/Leap）、Alpine——以及 
 
 <Tab value="Script">
 
-官方脚本是推荐的安装方式。安装过程中，它会生成一个**随机**的用户名、密码和访问（Web 根）路径，配置服务，
+Fork 脚本是推荐的预览版安装方式。安装过程中，它会生成一个**随机**的用户名、密码和访问（Web 根）路径，配置服务，
 并安装 `x-ui` 管理命令。
 
-```bash title="latest stable"
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
-```
-
-在命令后附加标签即可安装**指定版本**：
-
-```bash title="pinned version"
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) v3.4.0
-```
-
-传入 `dev-latest` 可安装滚动更新的**开发版**构建（来自 `main` 的最新逐提交预发布版本
-——并非稳定版）：
-
-```bash title="rolling dev build"
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) dev-latest
+```bash title="fork dev preview"
+bash <(curl -Ls https://raw.githubusercontent.com/YoungReckless4/3x-ui/main/install.sh) dev-latest
 ```
 
 安装完成后，记下打印出的登录信息并运行 `x-ui` 打开
@@ -60,7 +50,7 @@ docker compose up -d
 docker compose --profile postgres up -d
 ```
 
-更想用预构建镜像？它已发布到 GitHub Container Registry。该镜像内置了 Fail2ban（用于
+Fork Docker 镜像尚未发布。发布版本后，镜像会上传到 GitHub Container Registry。该镜像内置了 Fail2ban（用于
 [IP 限制](/docs/operations/security)），其封禁通过 `iptables` 实现，因此需要 `NET_ADMIN`
 （IPv6 还需 `NET_RAW`）——
 否则封禁只会被记录，而不会实际生效：
@@ -75,7 +65,7 @@ docker run -d \
   --network=host \
   --restart=unless-stopped \
   --name 3x-ui \
-  ghcr.io/mhsanaei/3x-ui:latest
+  ghcr.io/youngreckless4/3x-ui:latest
 ```
 
 `db/` 卷保存 SQLite 数据库（`/etc/x-ui/x-ui.db`），`cert/`
@@ -85,7 +75,7 @@ docker run -d \
 
 <Tab value="Manual">
 
-高级用户可从[发布页面](https://github.com/MHSanaei/3x-ui/releases)
+Fork 首次发布后，高级用户可从[发布页面](https://github.com/YoungReckless4/3x-ui/releases)
 下载适用于你架构的发布归档包，解压后
 将二进制文件作为 systemd 服务运行。安装脚本正是将这些步骤自动化，
 因此除非你有特定理由要手动安装，否则更推荐使用脚本。
@@ -118,10 +108,10 @@ docker run -d \
 `/etc/x-ui/install-result.env`：
 
 ```bash
-XUI_NONINTERACTIVE=1 bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
+XUI_NONINTERACTIVE=1 bash <(curl -Ls https://raw.githubusercontent.com/YoungReckless4/3x-ui/main/install.sh) dev-latest
 ```
 
-仓库的 [`deploy/`](https://github.com/MHSanaei/3x-ui/tree/main/deploy)
+仓库的 [`deploy/`](https://github.com/YoungReckless4/3x-ui/tree/main/deploy)
 目录提供了现成的 **cloud-init** user-data，可用于在任意云平台上进行无人值守安装
 （Hetzner、AWS、DigitalOcean、Vultr、GCP、Azure、Oracle）。
 

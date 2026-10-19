@@ -1,8 +1,12 @@
 package panel
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -12,6 +16,68 @@ import (
 	"github.com/mhsanaei/3x-ui/v3/internal/config"
 	"github.com/mhsanaei/3x-ui/v3/internal/web/service"
 )
+
+func TestPanelReleaseRequestsUseForkRepository(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": "dev-latest"})
+	}))
+	defer server.Close()
+	oldAPIBase, oldClient := panelGitHubAPIBaseURL, newPanelHTTPClient
+	panelGitHubAPIBaseURL = server.URL
+	newPanelHTTPClient = func(time.Duration) *http.Client { return server.Client() }
+	t.Cleanup(func() {
+		panelGitHubAPIBaseURL, newPanelHTTPClient = oldAPIBase, oldClient
+	})
+
+	if _, err := fetchPanelRelease(""); err != nil {
+		t.Fatalf("fetch latest fork release: %v", err)
+	}
+	if _, err := fetchPanelRelease(devReleaseTag); err != nil {
+		t.Fatalf("fetch fork dev release: %v", err)
+	}
+	want := []string{
+		"/repos/YoungReckless4/3x-ui/releases/latest",
+		"/repos/YoungReckless4/3x-ui/releases/tags/dev-latest",
+	}
+	if len(paths) != len(want) || paths[0] != want[0] || paths[1] != want[1] {
+		t.Fatalf("release request paths = %v, want %v", paths, want)
+	}
+}
+
+func TestPanelUpdaterDownloadUsesForkRepository(t *testing.T) {
+	const body = "#!/bin/sh\nexit 0\n"
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+	oldRawBase, oldClient := panelGitHubRawBaseURL, newPanelHTTPClient
+	panelGitHubRawBaseURL = server.URL
+	newPanelHTTPClient = func(time.Duration) *http.Client { return server.Client() }
+	t.Cleanup(func() {
+		panelGitHubRawBaseURL, newPanelHTTPClient = oldRawBase, oldClient
+	})
+
+	path, err := downloadPanelUpdater()
+	if err != nil {
+		t.Fatalf("download fork updater: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+	got, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		t.Fatalf("read downloaded updater: %v", err)
+	}
+	if string(got) != body {
+		t.Fatalf("downloaded updater = %q, want %q", got, body)
+	}
+	want := []string{"/YoungReckless4/3x-ui/main/update.sh"}
+	if len(paths) != 1 || paths[0] != want[0] {
+		t.Fatalf("updater request paths = %v, want %v", paths, want)
+	}
+}
 
 func TestIsNewerVersion(t *testing.T) {
 	cases := []struct {
