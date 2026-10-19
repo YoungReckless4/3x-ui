@@ -3,6 +3,7 @@ package amneziawgkern
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
 
@@ -35,6 +36,80 @@ func TestStructuralFingerprintIgnoresPeers(t *testing.T) {
 	}
 	if structuralFingerprint(a) != structuralFingerprint(b) {
 		t.Error("adding a peer must not change the structural fingerprint, or syncconf is never used")
+	}
+}
+
+func TestEnsureAdoptionPreservesTrafficBaselineUntilDump(t *testing.T) {
+	commands := make([][]string, 0, 2)
+	m := &Manager{
+		ifaces:  map[int]*managed{},
+		confDir: t.TempDir(),
+		ops: managerOps{
+			linkExists:           func(string) bool { return true },
+			liveInterfaceMatches: func(string, amneziawg.Instance) bool { return true },
+			writeConf:            func(string, string, string) error { return nil },
+			syncPeers:            func(string) error { return nil },
+			run: func(name string, args ...string) (string, error) {
+				commands = append(commands, append([]string{name}, args...))
+				return "", nil
+			},
+		},
+	}
+	inst := testInstance()
+	inst.InterfaceName = "awg-traffic-lifecycle-test"
+	collector := NewCollector()
+	if err := m.Ensure(Desired{Instance: inst}); err != nil {
+		t.Fatalf("Ensure adopted interface: %v", err)
+	}
+	state, ok := m.TrafficStateFor(inst.Id)
+	if !ok || !state.Adopted {
+		t.Fatalf("adopted traffic state = %+v, %v; want pending baseline", state, ok)
+	}
+
+	inst.Peers = append(inst.Peers, amneziawg.Peer{PublicKey: "newPeerPublicKeyBase64ValueForTests000000="})
+	if err := m.Ensure(Desired{Instance: inst}); err != nil {
+		t.Fatalf("Ensure peer sync: %v", err)
+	}
+	afterSync, _ := m.TrafficStateFor(inst.Id)
+	if afterSync != state {
+		t.Fatalf("peer sync changed traffic state: before %+v, after %+v", state, afterSync)
+	}
+
+	if !m.PrimeAdoptedTrafficBaseline(inst.Id, state.Generation, []PeerStat{{PublicKey: "p", RxBytes: 125, TxBytes: 250}}, collector) {
+		t.Fatal("first successful adopted dump did not prime the collector")
+	}
+	if got := collector.Delta(inst.InterfaceName, []PeerStat{{PublicKey: "p", RxBytes: 125, TxBytes: 250}}); len(got) != 0 {
+		t.Fatalf("same counters after prime = %+v, want no delta", got)
+	}
+	got := collector.Delta(inst.InterfaceName, []PeerStat{{PublicKey: "p", RxBytes: 150, TxBytes: 300}})
+	if len(got) != 1 || got[0].Up != 25 || got[0].Down != 50 {
+		t.Fatalf("delta after prime = %+v, want 25/50", got)
+	}
+	afterPrime, _ := m.TrafficStateFor(inst.Id)
+	if afterPrime.Adopted || afterPrime.Generation != state.Generation {
+		t.Fatalf("traffic state after prime = %+v, want same generation without pending baseline", afterPrime)
+	}
+
+	inst.MTU++
+	if err := m.Ensure(Desired{Instance: inst}); err != nil {
+		t.Fatalf("Ensure rebuilt interface: %v", err)
+	}
+	afterRebuild, _ := m.TrafficStateFor(inst.Id)
+	if afterRebuild.Adopted || afterRebuild.Generation == state.Generation {
+		t.Fatalf("rebuilt traffic state = %+v, want a fresh generation without adoption baseline", afterRebuild)
+	}
+	if m.PrimeAdoptedTrafficBaseline(inst.Id, state.Generation, []PeerStat{{PublicKey: "p", RxBytes: 1, TxBytes: 2}}, collector) {
+		t.Fatal("stale adoption generation primed a rebuilt interface")
+	}
+	if got = collector.Delta(inst.InterfaceName, []PeerStat{{PublicKey: "p", RxBytes: 150, TxBytes: 300}}); len(got) != 0 {
+		t.Fatalf("stale prime changed collector baseline after rebuild: %+v", got)
+	}
+	got = collector.Delta(inst.InterfaceName, []PeerStat{{PublicKey: "p", RxBytes: 175, TxBytes: 350}})
+	if len(got) != 1 || got[0].Up != 25 || got[0].Down != 50 {
+		t.Fatalf("delta after rejected stale prime = %+v, want 25/50", got)
+	}
+	if !reflect.DeepEqual(commands, [][]string{{"awg-quick", "down", interfaceName(inst)}, {"awg-quick", "up", interfaceName(inst)}}) {
+		t.Fatalf("rebuild commands = %v, want awg-quick down/up", commands)
 	}
 }
 

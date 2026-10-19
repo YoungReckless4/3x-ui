@@ -87,14 +87,8 @@ type endpointSighting struct {
 	seen time.Time
 }
 
-// Collector turns the kernel's monotonic per-peer counters into the deltas the
-// panel's traffic accounting expects, and tracks which endpoints each peer has
-// connected from.
-//
-// The delta part is not bookkeeping pedantry. Kernel counters restart at zero
-// whenever the interface is recreated -- every MTU change, key rotation or
-// panel restart -- so feeding raw totals to AddTraffic would re-add a client's
-// entire lifetime usage on each rebuild and trip their traffic limit.
+// Collector converts kernel counters to traffic deltas and tracks recent peer
+// endpoints; adopted interfaces are primed once before deltas resume.
 type Collector struct {
 	mu        sync.Mutex
 	last      map[string]counters
@@ -149,6 +143,22 @@ func (c *Collector) Delta(iface string, stats []PeerStat) []Delta {
 		out = append(out, Delta{PublicKey: s.PublicKey, Up: up, Down: down})
 	}
 	return out
+}
+
+// Prime sets an adopted interface's current counters as the starting point.
+func (c *Collector) Prime(iface string, stats []PeerStat) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	prefix := iface + "/"
+	for k := range c.last {
+		if strings.HasPrefix(k, prefix) {
+			delete(c.last, k)
+		}
+	}
+	for _, s := range stats {
+		c.last[key(iface, s.PublicKey)] = counters{rx: s.RxBytes, tx: s.TxBytes}
+	}
 }
 
 // ObserveEndpoints records where each peer is currently connecting from, for

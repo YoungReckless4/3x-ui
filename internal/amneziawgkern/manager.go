@@ -45,18 +45,37 @@ type managed struct {
 	// interface -- address, MTU, listen port, key, obfuscation, NAT block.
 	// When only the peer list differs, syncconf keeps existing sessions
 	// alive; a structural change has to go down and back up.
-	structFP string
+	structFP               string
+	trafficGeneration      uint64
+	trafficBaselinePending bool
+}
+
+// TrafficInterfaceState identifies one managed interface generation.
+type TrafficInterfaceState struct {
+	Name       string
+	Generation uint64
+	Adopted    bool
 }
 
 // Manager owns the running kernel interfaces keyed by inbound id, mirroring
 // internal/amneziawgnet.Manager's shape so callers can hold either behind the
 // same call sites.
 type Manager struct {
-	mu     sync.Mutex
-	ifaces map[int]*managed
+	mu         sync.Mutex
+	ifaces     map[int]*managed
+	generation uint64
+	ops        managerOps
 	// confDir is where awg-quick configs are written; a field rather than a
 	// constant so the write path is testable off /etc.
 	confDir string
+}
+
+type managerOps struct {
+	linkExists           func(string) bool
+	liveInterfaceMatches func(string, amneziawg.Instance) bool
+	writeConf            func(string, string, string) error
+	syncPeers            func(string) error
+	run                  func(string, ...string) (string, error)
 }
 
 var (
@@ -98,11 +117,11 @@ func (m *Manager) ensureLocked(d Desired) error {
 	fp := structuralFingerprint(conf)
 
 	cur, exists := m.ifaces[inst.Id]
-	if exists && cur.conf == conf && linkExists(name) {
+	if exists && cur.conf == conf && m.linkExists(name) {
 		return nil
 	}
 
-	if err := writeConf(m.confDir, name, conf); err != nil {
+	if err := m.writeConf(m.confDir, name, conf); err != nil {
 		return err
 	}
 
@@ -113,9 +132,9 @@ func (m *Manager) ensureLocked(d Desired) error {
 	// stays gone. Address and MTU are checked against the live netdev because
 	// they are the only properties syncconf cannot repair; keys, listen port
 	// and every obfuscation field it applies for us.
-	if !exists && liveInterfaceMatches(name, inst) {
+	if !exists && m.liveInterfaceMatches(name, inst) {
 		if err := m.syncPeers(name); err == nil {
-			m.ifaces[inst.Id] = &managed{name: name, conf: conf, structFP: fp}
+			m.ifaces[inst.Id] = m.newManaged(name, conf, fp, true)
 			logger.Info("amneziawgkern: adopted running interface ", name, " for inbound ", inst.Id)
 			return nil
 		} else {
@@ -128,32 +147,70 @@ func (m *Manager) ensureLocked(d Desired) error {
 	// restart, a link that vanished underneath us, a changed port or key --
 	// goes through a full down/up so the kernel state cannot silently diverge
 	// from the config on disk.
-	if exists && cur.structFP == fp && linkExists(name) {
+	if exists && cur.structFP == fp && m.linkExists(name) {
 		if err := m.syncPeers(name); err != nil {
 			return err
 		}
-		m.ifaces[inst.Id] = &managed{name: name, conf: conf, structFP: fp}
+		cur.conf = conf
+		cur.structFP = fp
+		m.ifaces[inst.Id] = cur
 		logger.Debug("amneziawgkern: synced peers for ", name)
 		return nil
 	}
 
-	if linkExists(name) {
-		if out, err := run("awg-quick", "down", name); err != nil {
+	if m.linkExists(name) {
+		if out, err := m.run("awg-quick", "down", name); err != nil {
 			// A stale link with no matching config makes awg-quick down fail;
 			// drop the netdev directly so `up` below starts from nothing.
 			logger.Warning("amneziawgkern: awg-quick down ", name, ": ", err, " ", out)
-			if out, err := run("ip", "link", "del", name); err != nil {
+			if out, err := m.run("ip", "link", "del", name); err != nil {
 				return fmt.Errorf("amneziawgkern: removing stale link %s: %w (%s)", name, err, out)
 			}
 		}
 	}
-	if out, err := run("awg-quick", "up", name); err != nil {
+	if out, err := m.run("awg-quick", "up", name); err != nil {
 		return fmt.Errorf("amneziawgkern: awg-quick up %s: %w (%s)", name, err, out)
 	}
 
-	m.ifaces[inst.Id] = &managed{name: name, conf: conf, structFP: fp}
+	m.ifaces[inst.Id] = m.newManaged(name, conf, fp, false)
 	logger.Info("amneziawgkern: started kernel interface ", name, " for inbound ", inst.Id)
 	return nil
+}
+
+func (m *Manager) newManaged(name, conf, fp string, adopted bool) *managed {
+	m.generation++
+	return &managed{
+		name: name, conf: conf, structFP: fp,
+		trafficGeneration: m.generation, trafficBaselinePending: adopted,
+	}
+}
+
+func (m *Manager) linkExists(name string) bool {
+	if m.ops.linkExists != nil {
+		return m.ops.linkExists(name)
+	}
+	return linkExists(name)
+}
+
+func (m *Manager) liveInterfaceMatches(name string, inst amneziawg.Instance) bool {
+	if m.ops.liveInterfaceMatches != nil {
+		return m.ops.liveInterfaceMatches(name, inst)
+	}
+	return liveInterfaceMatches(name, inst)
+}
+
+func (m *Manager) writeConf(dir, name, conf string) error {
+	if m.ops.writeConf != nil {
+		return m.ops.writeConf(dir, name, conf)
+	}
+	return writeConf(dir, name, conf)
+}
+
+func (m *Manager) run(name string, args ...string) (string, error) {
+	if m.ops.run != nil {
+		return m.ops.run(name, args...)
+	}
+	return run(name, args...)
 }
 
 // syncPeers applies the on-disk config's peer list to the live interface.
@@ -162,7 +219,10 @@ func (m *Manager) ensureLocked(d Desired) error {
 // module: feeding it an unstripped config fails with "Line unrecognized:
 // `Address=...'".
 func (m *Manager) syncPeers(name string) error {
-	stripped, err := run("awg-quick", "strip", ConfPathIn(m.confDir, name))
+	if m.ops.syncPeers != nil {
+		return m.ops.syncPeers(name)
+	}
+	stripped, err := m.run("awg-quick", "strip", ConfPathIn(m.confDir, name))
 	if err != nil {
 		return fmt.Errorf("amneziawgkern: awg-quick strip %s: %w (%s)", name, err, stripped)
 	}
@@ -177,7 +237,7 @@ func (m *Manager) syncPeers(name string) error {
 	}
 	tmp.Close()
 
-	if out, err := run("awg", "syncconf", name, tmp.Name()); err != nil {
+	if out, err := m.run("awg", "syncconf", name, tmp.Name()); err != nil {
 		return fmt.Errorf("amneziawgkern: awg syncconf %s: %w (%s)", name, err, out)
 	}
 	return nil
@@ -260,7 +320,7 @@ func (m *Manager) Running(id int) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cur, ok := m.ifaces[id]
-	return ok && linkExists(cur.name)
+	return ok && m.linkExists(cur.name)
 }
 
 // InterfaceNameFor exposes the interface an inbound would use, for callers
@@ -273,6 +333,33 @@ func (m *Manager) InterfaceNameFor(id int) (string, bool) {
 		return "", false
 	}
 	return cur.name, true
+}
+
+// TrafficStateFor returns the current generation and whether it was adopted.
+func (m *Manager) TrafficStateFor(id int) (TrafficInterfaceState, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cur, ok := m.ifaces[id]
+	if !ok || !m.linkExists(cur.name) {
+		return TrafficInterfaceState{}, false
+	}
+	return TrafficInterfaceState{
+		Name: cur.name, Generation: cur.trafficGeneration,
+		Adopted: cur.trafficBaselinePending,
+	}, true
+}
+
+// PrimeAdoptedTrafficBaseline consumes a matching adoption after its first dump.
+func (m *Manager) PrimeAdoptedTrafficBaseline(id int, generation uint64, stats []PeerStat, collector *Collector) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cur, ok := m.ifaces[id]
+	if !ok || cur.trafficGeneration != generation || !cur.trafficBaselinePending || !m.linkExists(cur.name) {
+		return false
+	}
+	collector.Prime(cur.name, stats)
+	cur.trafficBaselinePending = false
+	return true
 }
 
 // liveInterfaceMatches reports whether an existing netdev is already carrying

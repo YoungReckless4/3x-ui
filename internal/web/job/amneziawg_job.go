@@ -135,23 +135,45 @@ func (j *AmneziaWGJob) desiredOutboundInstances() ([]amneziawgnet.OutboundDesire
 // collectKernelTraffic feeds each kernel interface's per-peer counter
 // increments into the same accounting the rest of the panel uses.
 func (j *AmneziaWGJob) collectKernelTraffic(kernel []amneziawgkern.Desired) {
+	collectKernelTrafficWith(
+		&j.inboundService, kernel, amneziawgkern.GetManager(),
+		amneziawgkern.GetCollector(), amneziawgkern.Dump,
+	)
+}
+
+type kernelTrafficManager interface {
+	TrafficStateFor(id int) (amneziawgkern.TrafficInterfaceState, bool)
+	PrimeAdoptedTrafficBaseline(id int, generation uint64, stats []amneziawgkern.PeerStat, collector *amneziawgkern.Collector) bool
+}
+
+type kernelTrafficDumper func(string) ([]amneziawgkern.PeerStat, error)
+
+func collectKernelTrafficWith(inboundService *service.InboundService, kernel []amneziawgkern.Desired, manager kernelTrafficManager, collector *amneziawgkern.Collector, dump kernelTrafficDumper) {
 	if len(kernel) == 0 {
 		return
 	}
 
-	collector := amneziawgkern.GetCollector()
-	manager := amneziawgkern.GetManager()
 	now := time.Now()
 
 	var traffics []*xray.ClientTraffic
 	for _, d := range kernel {
-		iface, ok := manager.InterfaceNameFor(d.Instance.Id)
+		state, ok := manager.TrafficStateFor(d.Instance.Id)
 		if !ok {
 			continue
 		}
-		stats, err := amneziawgkern.Dump(iface)
+		stats, err := dump(state.Name)
 		if err != nil {
-			logger.Warning("amneziawg job: reading counters for ", iface, ": ", err)
+			logger.Warning("amneziawg job: reading counters for ", state.Name, ": ", err)
+			continue
+		}
+		if len(stats) == 0 {
+			continue
+		}
+		current, ok := manager.TrafficStateFor(d.Instance.Id)
+		if !ok || current.Name != state.Name || current.Generation != state.Generation {
+			continue
+		}
+		if state.Adopted && !manager.PrimeAdoptedTrafficBaseline(d.Instance.Id, state.Generation, stats, collector) {
 			continue
 		}
 
@@ -159,13 +181,17 @@ func (j *AmneziaWGJob) collectKernelTraffic(kernel []amneziawgkern.Desired) {
 		for _, p := range d.Instance.Peers {
 			emails[p.PublicKey] = p.Email
 		}
-		collector.SetEmails(iface, emails)
-		collector.ObserveEndpoints(iface, stats, now, endpointWindow)
-		collector.ObserveHandshakes(iface, stats)
+		collector.SetEmails(state.Name, emails)
+		collector.ObserveEndpoints(state.Name, stats, now, endpointWindow)
+		collector.ObserveHandshakes(state.Name, stats)
+		if state.Adopted {
+			// Downtime traffic is unknowable without durable accounting state.
+			continue
+		}
 
 		// Deltas, never totals: kernel counters restart at zero on every
 		// interface rebuild, and AddTraffic adds whatever it is given.
-		for _, delta := range collector.Delta(iface, stats) {
+		for _, delta := range collector.Delta(state.Name, stats) {
 			email := emails[delta.PublicKey]
 			if email == "" {
 				continue
@@ -184,7 +210,7 @@ func (j *AmneziaWGJob) collectKernelTraffic(kernel []amneziawgkern.Desired) {
 	}
 	// A client that just crossed its limit is disabled here; the next reconcile
 	// tick drops its peer from the interface, which is what cuts it off.
-	if _, _, err := j.inboundService.AddTraffic(nil, traffics); err != nil {
+	if _, _, err := inboundService.AddTraffic(nil, traffics); err != nil {
 		logger.Warning("amneziawg job: recording kernel-mode traffic:", err)
 	}
 }
