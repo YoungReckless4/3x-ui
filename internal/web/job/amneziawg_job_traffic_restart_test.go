@@ -6,6 +6,7 @@ import (
 
 	"github.com/mhsanaei/3x-ui/v3/internal/amneziawg"
 	"github.com/mhsanaei/3x-ui/v3/internal/amneziawgkern"
+	"github.com/mhsanaei/3x-ui/v3/internal/amneziawgnet"
 	"github.com/mhsanaei/3x-ui/v3/internal/database"
 	"github.com/mhsanaei/3x-ui/v3/internal/database/model"
 	"github.com/mhsanaei/3x-ui/v3/internal/web/service"
@@ -112,5 +113,67 @@ func TestKernelTrafficJobDoesNotRechargeAfterAdoptingInterface(t *testing.T) {
 	}
 	if newPeerTraffic.Up != 7 || newPeerTraffic.Down != 9 {
 		t.Fatalf("new peer first counters = up %d down %d, want 7/9", newPeerTraffic.Up, newPeerTraffic.Down)
+	}
+}
+
+type transitionEmbeddedManager struct {
+	removed []int
+	started []int
+}
+
+func (m *transitionEmbeddedManager) Remove(id int) { m.removed = append(m.removed, id) }
+func (m *transitionEmbeddedManager) Reconcile(desired []amneziawgnet.Desired) {
+	m.started = m.started[:0]
+	for _, d := range desired {
+		m.started = append(m.started, d.Instance.Id)
+	}
+}
+
+type transitionKernelManager struct {
+	id          int
+	running     bool
+	failRemoval bool
+}
+
+func (m *transitionKernelManager) Reconcile(desired []amneziawgkern.Desired) {
+	wanted := false
+	for _, d := range desired {
+		if d.Instance.Id == m.id {
+			wanted = true
+		}
+	}
+	if wanted {
+		m.running = true
+		return
+	}
+	if m.running && m.failRemoval {
+		m.failRemoval = false
+		return
+	}
+	m.running = false
+}
+
+func (m *transitionKernelManager) Running(id int) bool { return id == m.id && m.running }
+
+func TestKernelToEmbeddedWaitsForKernelTeardownRetry(t *testing.T) {
+	const id = 91
+	embedded := []amneziawgnet.Desired{{Instance: amneziawg.Instance{Id: id}}}
+	kernel := &transitionKernelManager{id: id, running: true, failRemoval: true}
+	embeddedManager := &transitionEmbeddedManager{}
+
+	reconcileAmneziaWGDatapaths(embedded, nil, embeddedManager, kernel)
+	if len(embeddedManager.started) != 0 {
+		t.Fatalf("embedded reconcile started inbound %d while kernel teardown was still pending", embeddedManager.started[0])
+	}
+	if !kernel.running {
+		t.Fatal("first reconcile should retain the kernel interface after its simulated teardown failure")
+	}
+
+	reconcileAmneziaWGDatapaths(embedded, nil, embeddedManager, kernel)
+	if kernel.running {
+		t.Fatal("second reconcile should complete the kernel teardown")
+	}
+	if len(embeddedManager.started) != 1 || embeddedManager.started[0] != id {
+		t.Fatalf("embedded reconcile after teardown = %v, want inbound %d", embeddedManager.started, id)
 	}
 }

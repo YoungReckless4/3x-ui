@@ -786,9 +786,8 @@ Commands:
 //go:embed scripts/install-amneziawg-kernel.sh
 var installAwgKernelScript []byte
 
-// installAmneziaWGKernelModule runs the bundled installer that builds and loads
-// the AmneziaWG kernel module, in a terminal where a multi-minute apt+dkms
-// build with a dozen failure modes belongs.
+// installAmneziaWGKernelModule runs the bundled module installer.
+// It needs a terminal for its apt and DKMS build output.
 func installAmneziaWGKernelModule() {
 	if runtime.GOOS != "linux" {
 		fmt.Println("the AmneziaWG kernel module is Linux-only")

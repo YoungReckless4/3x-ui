@@ -31,9 +31,8 @@ func testInstance() amneziawg.Instance {
 	}
 }
 
-// TestRenderEmitsInterfaceAndPeers locks the field set awg-quick has to see:
-// a missing ListenPort or MTU silently changes which port clients reach and
-// whether full-size packets fragment.
+// TestRenderEmitsInterfaceAndPeers locks the field set awg-quick has to see: a missing ListenPort or
+// MTU silently changes which port clients reach and whether full-size packets fragment.
 func TestRenderEmitsInterfaceAndPeers(t *testing.T) {
 	t.Parallel()
 
@@ -67,10 +66,8 @@ func TestRenderEmitsInterfaceAndPeers(t *testing.T) {
 	}
 }
 
-// TestRenderFillsHeaderDefaults is the interop guard: the panel's own client
-// emitter writes H1..H4 = 1..4 when the stored values are blank, so a server
-// config that omits them or writes an empty value cannot talk to the configs
-// the panel hands out.
+// TestRenderFillsHeaderDefaults is the interop guard: the panel's own client emitter writes H1..H4 =
+// 1..4 when the stored values are blank, so a server config that omits them or writes an empty value
 func TestRenderFillsHeaderDefaults(t *testing.T) {
 	t.Parallel()
 
@@ -85,9 +82,8 @@ func TestRenderFillsHeaderDefaults(t *testing.T) {
 	}
 }
 
-// TestRenderMasqueradesSubnetNotHostAddress catches the easy mistake of
-// masquerading 10.8.1.1/24 verbatim: nftables would then match only the
-// server's own tunnel address and no peer traffic would ever be translated.
+// TestRenderMasqueradesSubnetNotHostAddress catches the easy mistake of masquerading 10.8.1.1/24
+// verbatim: nftables would then match only the server's own tunnel address and no peer traffic would
 func TestRenderMasqueradesSubnetNotHostAddress(t *testing.T) {
 	t.Parallel()
 
@@ -106,9 +102,8 @@ func TestRenderMasqueradesSubnetNotHostAddress(t *testing.T) {
 	}
 }
 
-// TestRenderSkipsNATWhenRoutingThroughXray: with the TPROXY bridge on, packets
-// are intercepted before postrouting, and leaving a masquerade rule behind
-// would rewrite the source of anything the bridge did not catch.
+// TestRenderSkipsNATWhenRoutingThroughXray preserves the renderer's no-NAT result.
+// Preflight rejects this setting before a kernel interface can start.
 func TestRenderSkipsNATWhenRoutingThroughXray(t *testing.T) {
 	t.Parallel()
 
@@ -184,9 +179,8 @@ func TestConfPathUsesInterfaceName(t *testing.T) {
 	}
 }
 
-// TestDetectDefaultInterfaceSkipsVirtual only asserts the naming contract --
-// the real host's interface list is not something a test can arrange -- but a
-// tunnel or bridge device chosen as the NAT egress would black-hole traffic.
+// TestDetectDefaultInterfaceSkipsVirtual only asserts the naming contract -- the real host's interface
+// list is not something a test can arrange -- but a tunnel or bridge device chosen as the NAT egress
 func TestDetectDefaultInterfaceSkipsVirtual(t *testing.T) {
 	t.Parallel()
 
@@ -202,9 +196,8 @@ func TestDetectDefaultInterfaceSkipsVirtual(t *testing.T) {
 	}
 }
 
-// TestRenderFallsBackToS4AwareMTU: an inbound with no explicit MTU must not be
-// left on the netdev default, which knows nothing about the S4 junk prepended
-// to every transport packet.
+// TestRenderFallsBackToS4AwareMTU: an inbound with no explicit MTU must not be left on the netdev
+// default, which knows nothing about the S4 junk prepended to every transport packet.
 func TestRenderFallsBackToS4AwareMTU(t *testing.T) {
 	t.Parallel()
 

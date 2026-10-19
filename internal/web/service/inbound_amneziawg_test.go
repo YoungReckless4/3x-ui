@@ -478,3 +478,32 @@ func TestNormalizeAmneziaWGSettings_DerivesServerPublicKeyFromPrivate(t *testing
 		t.Fatalf("server publicKey = %q, want %q derived from the supplied private key", parsed.Server.PublicKey, want)
 	}
 }
+
+func TestNormalizeAmneziaWGSettingsDefersNodeKernelPreflightToRemoteHost(t *testing.T) {
+	setupConflictDB(t)
+	server, err := defaultAmneziaWGServer()
+	if err != nil {
+		t.Fatalf("defaultAmneziaWGServer: %v", err)
+	}
+	server.KernelMode = true
+	settings, err := json.Marshal(amneziawg.InboundSettings{Server: server, Clients: []model.Client{}})
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	inbound := &model.Inbound{
+		Protocol: model.AmneziaWG,
+		NodeID:   new(7),
+		Port:     51820,
+		Settings: string(settings),
+	}
+	if err := (&InboundService{}).normalizeAmneziaWGSettings(inbound, ""); err != nil {
+		t.Fatalf("master must defer kernel readiness to the target node: %v", err)
+	}
+	var normalized amneziawg.InboundSettings
+	if err := json.Unmarshal([]byte(inbound.Settings), &normalized); err != nil {
+		t.Fatalf("decode normalized settings: %v", err)
+	}
+	if normalized.Server == nil || !normalized.Server.KernelMode {
+		t.Fatalf("normalized node settings lost kernel mode: %+v", normalized.Server)
+	}
+}

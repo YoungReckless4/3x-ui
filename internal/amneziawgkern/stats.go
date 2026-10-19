@@ -38,9 +38,7 @@ func Dump(iface string) ([]PeerStat, error) {
 	return ParseDump(out)
 }
 
-// ParseDump reads `awg show <iface> dump` output: one tab-separated interface
-// line, then one line per peer. Split out from Dump so the parser is testable
-// without a kernel interface.
+// ParseDump parses the tab-separated output from `awg show <iface> dump`.
 func ParseDump(out string) ([]PeerStat, error) {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) == 0 || strings.TrimSpace(lines[0]) == "" {
@@ -112,11 +110,7 @@ func NewCollector() *Collector {
 
 func key(iface, publicKey string) string { return iface + "/" + publicKey }
 
-// Delta records the current counters and returns what changed since the last
-// call. A peer seen for the first time contributes its full current counters
-// once: the interface was just created, so those bytes really are new.
-// A counter that went backwards means the interface was recreated underneath
-// us, and the current value is the whole delta.
+// Delta records the current counters and returns what changed since the last call.
 func (c *Collector) Delta(iface string, stats []PeerStat) []Delta {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -161,41 +155,58 @@ func (c *Collector) Prime(iface string, stats []PeerStat) {
 	}
 }
 
-// ObserveEndpoints records where each peer is currently connecting from, for
-// the kernel-mode reading of limitIp.
-//
-// The embedded backend counts distinct client source addresses out of Xray's
-// access log. There is no such log here: the kernel shows exactly one endpoint
-// per peer, so "how many IPs is this client using" becomes "how many different
-// places has this client connected from recently" -- which catches a shared
-// config the same way, just on a slower signal.
+// ObserveEndpoints tracks recent source addresses used by kernel-mode peers.
 func (c *Collector) ObserveEndpoints(iface string, stats []PeerStat, now time.Time, window time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	cutoff := now.Add(-window)
+	prefix := iface + "/"
+	for k, sightings := range c.endpoints {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		kept := sightings[:0]
+		for _, sighting := range sightings {
+			if !sighting.seen.Before(cutoff) {
+				kept = append(kept, sighting)
+			}
+		}
+		if len(kept) == 0 {
+			delete(c.endpoints, k)
+		} else {
+			c.endpoints[k] = kept
+		}
+	}
 	for _, s := range stats {
 		addr := endpointHost(s.Endpoint)
-		if addr == "" {
+		if addr == "" || s.LatestHandshake <= 0 {
+			continue
+		}
+		seen := time.Unix(s.LatestHandshake, 0)
+		if seen.After(now) || seen.Before(cutoff) {
 			continue
 		}
 		k := key(iface, s.PublicKey)
 		kept := c.endpoints[k][:0]
 		found := false
 		for _, e := range c.endpoints[k] {
-			if e.seen.Before(cutoff) {
-				continue
-			}
 			if e.addr == addr {
-				e.seen = now
+				if seen.After(e.seen) {
+					e.seen = seen
+				}
 				found = true
 			}
 			kept = append(kept, e)
 		}
 		if !found {
-			kept = append(kept, endpointSighting{addr: addr, seen: now})
+			kept = append(kept, endpointSighting{addr: addr, seen: seen})
 		}
-		c.endpoints[k] = kept
+		if len(kept) == 0 {
+			delete(c.endpoints, k)
+		} else {
+			c.endpoints[k] = kept
+		}
 	}
 }
 
@@ -271,9 +282,7 @@ var (
 	collector     *Collector
 )
 
-// GetCollector returns the process-wide counter/endpoint collector. Shared
-// rather than per-caller so the reconcile job can record observations and the
-// IP-limit job can read them without either knowing about the other.
+// GetCollector returns the process-wide counter/endpoint collector.
 func GetCollector() *Collector {
 	collectorOnce.Do(func() { collector = NewCollector() })
 	return collector
@@ -285,21 +294,50 @@ func (c *Collector) SetEmails(iface string, byPublicKey map[string]string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	active := make(map[string]string, len(byPublicKey))
+	for pk, email := range byPublicKey {
+		if pk != "" && email != "" {
+			active[key(iface, pk)] = email
+		}
+	}
+	prefix := iface + "/"
+	for k := range c.last {
+		if strings.HasPrefix(k, prefix) {
+			if _, ok := active[k]; !ok {
+				delete(c.last, k)
+			}
+		}
+	}
+	for k := range c.endpoints {
+		if strings.HasPrefix(k, prefix) {
+			if _, ok := active[k]; !ok {
+				delete(c.endpoints, k)
+			}
+		}
+	}
+	for k := range c.handshakes {
+		if strings.HasPrefix(k, prefix) {
+			if _, ok := active[k]; !ok {
+				delete(c.handshakes, k)
+			}
+		}
+	}
 	if c.emails == nil {
 		c.emails = map[string]string{}
 	}
-	for pk, email := range byPublicKey {
-		if email == "" {
-			continue
+	for k := range c.emails {
+		if strings.HasPrefix(k, prefix) {
+			if _, ok := active[k]; !ok {
+				delete(c.emails, k)
+			}
 		}
-		c.emails[key(iface, pk)] = email
+	}
+	for k, email := range active {
+		c.emails[k] = email
 	}
 }
 
-// ClientIPs renders the tracked endpoints in the shape CheckClientIpJob's
-// online-stats collection produces: email -> address -> last-seen unix
-// seconds. Kernel-mode peers never appear in Xray's online users, so merging
-// this in is what keeps limitIp working for them at all.
+// ClientIPs returns recent peer endpoints as email -> address -> last-seen Unix timestamp.
 func (c *Collector) ClientIPs() map[string]map[string]int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -323,14 +361,10 @@ func (c *Collector) ClientIPs() map[string]map[string]int64 {
 	return out
 }
 
-// onlineHandshakeAge is how recently a peer must have completed a handshake to
-// count as online. WireGuard rekeys about every two minutes and keepalives run
-// far more often, so a peer silent for longer than this is genuinely gone.
+// onlineHandshakeAge is how recently a peer must have completed a handshake to count as online.
 const onlineHandshakeAge = 3 * time.Minute
 
-// ObserveHandshakes records each peer's latest handshake so online status can
-// be derived. Kernel-mode peers never reach Xray, so its online-users API --
-// which the whole panel reads -- would otherwise report them all as offline.
+// ObserveHandshakes records each peer's latest handshake so online status can be derived.
 func (c *Collector) ObserveHandshakes(iface string, stats []PeerStat) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

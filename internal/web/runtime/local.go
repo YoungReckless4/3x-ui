@@ -167,20 +167,7 @@ func (l *Local) updateMtprotoInbound(ctx context.Context, oldIb, newIb *model.In
 	return mtproto.GetManager().Ensure(inst)
 }
 
-// updateAmneziaWGInbound mirrors updateMtprotoInbound: it skips the
-// Remove+Ensure sequence a plain Del+Add would force so that, on an
-// AmneziaWG-to-AmneziaWG edit, Manager.Ensure's own fingerprint comparison
-// can reconfigure the running embedded Device in place via IpcSet instead
-// of always rebuilding it (see internal/amneziawgnet.Manager.ensureLocked --
-// only an address or effective-MTU change forces a rebuild there, S4
-// included, not a peer edit).
-//
-// Every exit path below only touches the datapath managers -- none of it
-// rebuilds Xray's own config, which creates/removes the relay inbound.
-// A peer edit that changes whether this inbound has a qualifying peer at
-// all (its first peer added, or its last one removed) must still get that
-// relay created or torn down, so flag Xray for a resync unconditionally
-// here rather than trying to enumerate which of the branches below need it.
+// updateAmneziaWGInbound routes AmneziaWG CRUD through the active datapath managers.
 func (l *Local) updateAmneziaWGInbound(ctx context.Context, oldIb, newIb *model.Inbound) error {
 	if l.deps.SetNeedRestart != nil {
 		l.deps.SetNeedRestart()

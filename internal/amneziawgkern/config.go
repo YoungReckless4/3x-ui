@@ -1,12 +1,5 @@
-// Package amneziawgkern drives an AmneziaWG inbound through the DKMS kernel
-// module and awg-quick instead of internal/amneziawgnet's embedded
-// amneziawg-go + gVisor stack. It is the return of the architecture this fork
-// originally shipped and later retired (see internal/amneziawg/types.go's
-// ExternalInterface and RouteThroughXray doc comments): the kernel owns a real
-// netdev, so crypto, forwarding and NAT all stay in kernel space and no
-// decapsulated byte ever crosses into userspace. Measured against the embedded
-// path on a 1-vCPU box: 190 Mbit/s peak at 70% idle versus 124 Mbit/s peak at
-// 63% of one core.
+// Package amneziawgkern drives an AmneziaWG inbound through the DKMS kernel module and awg-quick
+// instead of internal/amneziawgnet's embedded amneziawg-go + gVisor stack.
 package amneziawgkern
 
 import (
@@ -53,14 +46,7 @@ func natTableName(inst amneziawg.Instance) string {
 	return fmt.Sprintf("awgnat%d", inst.Id)
 }
 
-// Render builds the awg-quick config for inst. Field order follows the
-// retired architecture's own emitter and internal/sub/service.go's
-// amneziaWGConfigText, so a server config and the client configs the panel
-// hands out stay readable side by side.
-//
-// egressInterface is the host NIC masquerade attaches to; pass "" to detect
-// it. When routeThroughXray is set the masquerade rules are omitted: the
-// TPROXY bridge takes the packets before they would reach postrouting.
+// Render builds the awg-quick config for inst.
 func Render(inst amneziawg.Instance, egressInterface string, routeThroughXray bool) (string, error) {
 	if listenNeedsPinnedBind(inst.Listen) {
 		return "", fmt.Errorf("amneziawgkern: kernel mode cannot bind to listen address %q; clear it or use a wildcard", inst.Listen)
@@ -116,11 +102,7 @@ func listenNeedsPinnedBind(listen string) bool {
 	}
 }
 
-// writeObfuscation emits the AmneziaWG parameter block. H1-H4 fall back to
-// WireGuard's own message-type numbers exactly as the panel's client-config
-// emitters do: leaving them out entirely would let the kernel pick its
-// defaults, but writing them keeps server and client configs diffable, and a
-// blank value is a config parse error rather than a default.
+// writeObfuscation emits the AmneziaWG parameter block.
 func writeObfuscation(b *strings.Builder, o amneziawg.Obfuscation31) {
 	fmt.Fprintf(b, "Jc = %d\n", o.Jc)
 	fmt.Fprintf(b, "Jmin = %d\n", o.Jmin)
@@ -169,10 +151,7 @@ func headerOrDefault(v string, n int) string {
 	return fmt.Sprint(n)
 }
 
-// natRules builds the PostUp/PostDown block. nftables rather than iptables:
-// Debian 13 and the other current targets ship nft and no longer install the
-// iptables compatibility wrappers by default. Each interface gets its own
-// table so PostDown's blanket delete stays scoped to this inbound.
+// natRules builds the PostUp/PostDown block.
 func natRules(inst amneziawg.Instance, egressInterface string) (string, error) {
 	subnets, err := v4Subnets(inst.Address)
 	if err != nil {
@@ -198,10 +177,8 @@ func natRules(inst amneziawg.Instance, egressInterface string) (string, error) {
 	return b.String(), nil
 }
 
-// v4Subnets turns the interface's own addresses ("10.8.1.1/24") into the
-// network each one covers ("10.8.1.0/24"), which is what masquerade matches
-// on. IPv6 addresses are skipped: per-peer IPv6 egress is not supported in
-// kernel mode yet, and Preflight refuses to start an inbound that wants it.
+// v4Subnets turns the interface's own addresses ("10.8.1.1/24") into the network each one covers
+// ("10.8.1.0/24"), which is what masquerade matches on.
 func v4Subnets(addresses []string) ([]string, error) {
 	var out []string
 	for _, a := range addresses {
@@ -221,9 +198,8 @@ func v4Subnets(addresses []string) ([]string, error) {
 	return out, nil
 }
 
-// DetectDefaultInterface picks the host NIC to masquerade out of when the
-// admin left ExternalInterface blank: the first up, non-loopback, non-virtual
-// interface holding a routable IPv4 address.
+// DetectDefaultInterface picks the host NIC to masquerade out of when the admin left ExternalInterface
+// blank: the first up, non-loopback, non-virtual interface holding a routable IPv4 address.
 func DetectDefaultInterface() string {
 	ifaces, err := net.Interfaces()
 	if err != nil {

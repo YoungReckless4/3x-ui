@@ -11,9 +11,7 @@ import (
 	"github.com/mhsanaei/3x-ui/v3/internal/amneziawg"
 )
 
-// installCommand is what an admin runs to satisfy every host-level blocker at
-// once. It names the running binary because /usr/bin/x-ui is the management
-// shell script, which has no such subcommand and would just open its menu.
+// installCommand is what an admin runs to satisfy every host-level blocker at once.
 func installCommand() string {
 	exe, err := os.Executable()
 	if err != nil || exe == "" {
@@ -22,9 +20,7 @@ func installCommand() string {
 	return "sudo " + exe + " install-awg-kernel"
 }
 
-// BlockerCode identifies one reason kernel mode cannot run. The UI translates
-// off the code, so the panel never has to render an English string that came
-// from the server.
+// BlockerCode identifies one reason kernel mode cannot run.
 type BlockerCode string
 
 const (
@@ -38,19 +34,17 @@ const (
 	BlockerListenAddress BlockerCode = "listenAddress"
 )
 
-// Blocker is one unmet requirement. Detail carries the specifics the code
-// alone cannot express (which binary is missing, say) and is meant to be shown
-// alongside the translated text, not instead of it.
+// Blocker is one unmet requirement.
 type Blocker struct {
-	Code   BlockerCode `json:"code"`
-	Detail string      `json:"detail,omitempty"`
+	Code   BlockerCode `json:"code" example:"tools"`
+	Detail string      `json:"detail,omitempty" example:"awg"`
 }
 
 // Readiness is the host's ability to run any kernel-mode inbound at all.
 type Readiness struct {
-	Ready          bool      `json:"ready"`
-	Blockers       []Blocker `json:"blockers"`
-	InstallCommand string    `json:"installCommand"`
+	Ready          bool      `json:"ready" example:"false"`
+	Blockers       []Blocker `json:"blockers" example:"[{\"code\":\"tools\",\"detail\":\"awg\"}]"`
+	InstallCommand string    `json:"installCommand" example:"sudo /usr/local/x-ui/x-ui install-awg-kernel"`
 }
 
 // readinessTTL keeps the form's polling from re-running modprobe on every
@@ -63,9 +57,8 @@ var (
 	readinessAt     time.Time
 )
 
-// HostReadiness reports whether this host can run kernel mode, independent of
-// any particular inbound -- the UI has to answer that before an instance
-// exists. Cached for readinessTTL because it probes the module.
+// HostReadiness reports host requirements independently of a particular inbound.
+// The UI can check it before an inbound exists.
 func HostReadiness() Readiness {
 	readinessMu.Lock()
 	defer readinessMu.Unlock()
@@ -88,7 +81,7 @@ func resetReadinessCache() {
 }
 
 func probeHost() Readiness {
-	r := Readiness{InstallCommand: installCommand()}
+	r := Readiness{Blockers: []Blocker{}, InstallCommand: installCommand()}
 
 	if os.Geteuid() != 0 {
 		r.Blockers = append(r.Blockers, Blocker{Code: BlockerNotRoot})
@@ -101,9 +94,7 @@ func probeHost() Readiness {
 	if !moduleAvailable() {
 		r.Blockers = append(r.Blockers, Blocker{Code: BlockerModuleMissing})
 	}
-	// NAT is the only egress kernel mode implements today, so nft is required
-	// unconditionally. When the TPROXY bridge lands this becomes conditional
-	// on routeThroughXray.
+	// NAT is the only egress kernel mode implements today, so nft is required unconditionally.
 	if _, err := exec.LookPath("nft"); err != nil {
 		r.Blockers = append(r.Blockers, Blocker{Code: BlockerNftMissing})
 	}
@@ -112,28 +103,19 @@ func probeHost() Readiness {
 	return r
 }
 
-// Preflight reports every reason this host or this inbound cannot run on the
-// kernel backend, all at once rather than one failure per save attempt: an
-// admin flipping the toggle wants the full list of what to fix, not a
-// six-round game of fix-and-retry.
-//
-// The UI gates the toggle on HostReadiness, but this still runs on save. The
-// UI's view can be stale, the API can be called directly, and a host can lose
-// the module between the form loading and the save landing.
+// Preflight reports host and inbound blockers before kernel mode is enabled.
+// This protects API saves when the frontend readiness check is stale.
 func Preflight(inst amneziawg.Instance, routeThroughXray bool) error {
 	blockers := append([]Blocker(nil), HostReadiness().Blockers...)
 
-	// Features the embedded backend has and this one does not yet. Refusing up
-	// front beats silently dropping them: a peer whose port-forward stops
-	// working after a backend switch is a support ticket nobody can diagnose.
+	// Features the embedded backend has and this one does not yet.
 	if instanceWantsIPv6(inst) {
 		blockers = append(blockers, Blocker{Code: BlockerIPv6})
 	}
 	if instanceWantsPortForwarding(inst) {
 		blockers = append(blockers, Blocker{Code: BlockerPortForward})
 	}
-	// Render drops the whole NAT block for routeThroughXray and no TPROXY bridge
-	// replaces it, so the tunnel would come up with no egress path at all.
+	// This backend has no Xray data path, so reject routeThroughXray.
 	if routeThroughXray {
 		blockers = append(blockers, Blocker{Code: BlockerRouteXray})
 	}
@@ -177,9 +159,6 @@ func describe(blockers []Blocker) []string {
 }
 
 // moduleAvailable checks for a loaded amneziawg module, then tries to load it.
-// Both paths matter: on a freshly booted host nothing has referenced the
-// module yet, and awg-quick would load it implicitly anyway -- doing it here
-// turns "interface failed to come up" into a precise message at save time.
 func moduleAvailable() bool {
 	if _, err := os.Stat("/sys/module/amneziawg"); err == nil {
 		return true

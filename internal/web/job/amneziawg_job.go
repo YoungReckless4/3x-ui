@@ -63,8 +63,7 @@ func (j *AmneziaWGJob) Run() {
 			},
 		})
 	}
-	amneziawgnet.GetManager().Reconcile(embedded)
-	amneziawgkern.GetManager().Reconcile(kernel)
+	reconcileAmneziaWGDatapaths(embedded, kernel, amneziawgnet.GetManager(), amneziawgkern.GetManager())
 	j.collectKernelTraffic(kernel)
 
 	outboundDesired, err := j.desiredOutboundInstances()
@@ -77,6 +76,31 @@ func (j *AmneziaWGJob) Run() {
 	if amneziawgnet.BridgesStale() {
 		j.xrayService.SetToNeedRestart()
 	}
+}
+
+type embeddedInboundManager interface {
+	Remove(int)
+	Reconcile([]amneziawgnet.Desired)
+}
+
+type kernelInboundManager interface {
+	Reconcile([]amneziawgkern.Desired)
+	Running(int) bool
+}
+
+func reconcileAmneziaWGDatapaths(embedded []amneziawgnet.Desired, kernel []amneziawgkern.Desired, embeddedManager embeddedInboundManager, kernelManager kernelInboundManager) {
+	for _, d := range kernel {
+		embeddedManager.Remove(d.Instance.Id)
+	}
+	kernelManager.Reconcile(kernel)
+	readyEmbedded := embedded[:0]
+	for _, d := range embedded {
+		if kernelManager.Running(d.Instance.Id) {
+			continue
+		}
+		readyEmbedded = append(readyEmbedded, d)
+	}
+	embeddedManager.Reconcile(readyEmbedded)
 }
 
 // desiredOutboundInstances derives client instances per template "amneziawg" outbound.

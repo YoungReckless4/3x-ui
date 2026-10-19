@@ -303,14 +303,7 @@ func checkPortConflictTx(db *gorm.DB, inbound *model.Inbound, ignoreId int) (*po
 		}, nil
 	}
 
-	// Every local embedded AmneziaWG inbound reserves an automatic Xray
-	// SOCKS5 relay inbound (see injectAmneziawgnetSocks) on 127.0.0.1 at a
-	// port derived purely from its id (amneziawgnet.SOCKSPortForInbound) --
-	// like the internal Xray API inbound above, that relay inbound is not
-	// itself a database row, so the ordinary DB-backed query below can never
-	// see it. Without this check, an unrelated inbound saved onto that exact
-	// port silently fails at the next Xray start, taking every other
-	// protocol down with it, not just AmneziaWG.
+	// Local embedded inbounds reserve an automatically assigned Xray SOCKS relay port.
 	if inbound.NodeID == nil && listenOverlaps(loopbackBind, inboundBindAddr(inbound)) {
 		conflict, err := checkAmneziawgnetSocksConflict(db, inbound, ignoreId, newBits)
 		if err != nil {

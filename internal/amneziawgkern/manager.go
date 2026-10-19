@@ -18,9 +18,7 @@ import (
 	"github.com/mhsanaei/3x-ui/v3/internal/logger"
 )
 
-// commandTimeout bounds every awg-quick/awg/ip invocation. awg-quick runs the
-// PostUp block synchronously, so this has to cover nftables work too, not just
-// the netlink calls.
+// commandTimeout bounds every awg-quick/awg/ip invocation.
 const commandTimeout = 20 * time.Second
 
 // Desired is one inbound's wanted kernel-interface state.
@@ -29,8 +27,7 @@ type Desired struct {
 	// EgressInterface is the host NIC masquerade attaches to; blank means
 	// detect it (DetectDefaultInterface).
 	EgressInterface string
-	// RouteThroughXray selects the TPROXY bridge instead of plain NAT, the
-	// same opt-in the retired kernel architecture exposed.
+	// RouteThroughXray reflects a persisted setting rejected by kernel preflight.
 	RouteThroughXray bool
 }
 
@@ -41,10 +38,8 @@ type managed struct {
 	// conf is the full rendered config last written, so an unchanged tick is
 	// a pure string compare with no exec at all.
 	conf string
-	// structFP covers everything awg syncconf cannot change on a live
-	// interface -- address, MTU, listen port, key, obfuscation, NAT block.
-	// When only the peer list differs, syncconf keeps existing sessions
-	// alive; a structural change has to go down and back up.
+	// structFP covers everything awg syncconf cannot change on a live interface -- address, MTU, listen
+	// port, key, obfuscation, NAT block.
 	structFP               string
 	trafficGeneration      uint64
 	trafficBaselinePending bool
@@ -58,8 +53,7 @@ type TrafficInterfaceState struct {
 }
 
 // Manager owns the running kernel interfaces keyed by inbound id, mirroring
-// internal/amneziawgnet.Manager's shape so callers can hold either behind the
-// same call sites.
+// internal/amneziawgnet.Manager's shape so callers can hold either behind the same call sites.
 type Manager struct {
 	mu         sync.Mutex
 	ifaces     map[int]*managed
@@ -92,14 +86,6 @@ func GetManager() *Manager {
 }
 
 // Ensure brings the inbound's kernel interface to the state d describes.
-//
-// Three outcomes, in the order they are cheapest: the rendered config is
-// byte-identical to what is already applied and nothing runs at all; only the
-// peer list changed and `awg syncconf` updates it without disturbing live
-// handshakes; or something the kernel fixes at interface-creation time
-// changed and the interface is torn down and recreated. That middle branch is
-// the whole reason syncconf exists -- `awg setconf` would drop and re-add
-// every peer, resetting each live session on every admin edit.
 func (m *Manager) Ensure(d Desired) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -125,13 +111,7 @@ func (m *Manager) ensureLocked(d Desired) error {
 		return err
 	}
 
-	// Adopt an interface that outlived the panel. After a restart m.ifaces is
-	// empty, so without this every start tore down a perfectly good tunnel and
-	// dropped every peer's session -- and an idle client with no
-	// PersistentKeepalive has nothing to trigger a reconnect, so it simply
-	// stays gone. Address and MTU are checked against the live netdev because
-	// they are the only properties syncconf cannot repair; keys, listen port
-	// and every obfuscation field it applies for us.
+	// Adopt an interface that outlived the panel.
 	if !exists && m.liveInterfaceMatches(name, inst) {
 		if err := m.syncPeers(name); err == nil {
 			m.ifaces[inst.Id] = m.newManaged(name, conf, fp, true)
@@ -142,11 +122,7 @@ func (m *Manager) ensureLocked(d Desired) error {
 		}
 	}
 
-	// Reconfigure in place only when we know the interface is genuinely ours
-	// and structurally unchanged. Anything else -- first Ensure after a panel
-	// restart, a link that vanished underneath us, a changed port or key --
-	// goes through a full down/up so the kernel state cannot silently diverge
-	// from the config on disk.
+	// Reconfigure in place only when we know the interface is genuinely ours and structurally unchanged.
 	if exists && cur.structFP == fp && m.linkExists(name) {
 		if err := m.syncPeers(name); err != nil {
 			return err
@@ -214,10 +190,6 @@ func (m *Manager) run(name string, args ...string) (string, error) {
 }
 
 // syncPeers applies the on-disk config's peer list to the live interface.
-// awg-quick's own `strip` is what turns an awg-quick config (Address, MTU,
-// PostUp) into the subset `awg` accepts -- confirmed against the running
-// module: feeding it an unstripped config fails with "Line unrecognized:
-// `Address=...'".
 func (m *Manager) syncPeers(name string) error {
 	if m.ops.syncPeers != nil {
 		return m.ops.syncPeers(name)
@@ -243,10 +215,8 @@ func (m *Manager) syncPeers(name string) error {
 	return nil
 }
 
-// Reconcile brings the whole set of kernel interfaces to what desired
-// describes, tearing down any that are no longer wanted. Mirrors
-// amneziawgnet.Manager.Reconcile so one job can drive both backends the same
-// way.
+// Reconcile brings the whole set of kernel interfaces to what desired describes, tearing down any that
+// are no longer wanted.
 func (m *Manager) Reconcile(desired []Desired) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -259,8 +229,9 @@ func (m *Manager) Reconcile(desired []Desired) {
 		if _, ok := want[id]; ok {
 			continue
 		}
-		if err := teardown(cur.name); err != nil {
+		if err := m.teardown(cur.name); err != nil {
 			logger.Warning("amneziawgkern: stopping removed inbound ", id, ": ", err)
+			continue
 		}
 		GetCollector().Forget(cur.name)
 		delete(m.ifaces, id)
@@ -282,22 +253,15 @@ func (m *Manager) Remove(id int) error {
 	if !ok {
 		return nil
 	}
+	if err := m.teardown(cur.name); err != nil {
+		return err
+	}
 	delete(m.ifaces, id)
 	GetCollector().Forget(cur.name)
-	return teardown(cur.name)
+	return nil
 }
 
-// StopAll releases this process's bookkeeping at panel shutdown and
-// deliberately leaves the kernel interfaces running.
-//
-// The whole point of the kernel datapath is that forwarding does not live in
-// this process: peers keep passing traffic while the panel restarts, exactly
-// as a plain awg-quick service would. Tearing the tunnels down here would cut
-// every user off for the duration of a panel upgrade, and -- because an idle
-// peer with no PersistentKeepalive has nothing to trigger a reconnect -- some
-// of them would simply stay off afterwards. The next start adopts whatever is
-// still up (see ensureLocked); an inbound that is genuinely removed or
-// disabled is torn down by Remove/Reconcile, which is where that belongs.
+// StopAll drops process bookkeeping while leaving kernel interfaces running.
 func (m *Manager) StopAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -362,10 +326,7 @@ func (m *Manager) PrimeAdoptedTrafficBaseline(id int, generation uint64, stats [
 	return true
 }
 
-// liveInterfaceMatches reports whether an existing netdev is already carrying
-// the address and MTU inst wants, i.e. whether it can be adopted instead of
-// recreated. Deliberately stdlib-only: this runs on every reconcile tick, and
-// shelling out to `ip` for something the kernel already exposes would be waste.
+// liveInterfaceMatches checks whether a live link already has the requested address and MTU.
 func liveInterfaceMatches(name string, inst amneziawg.Instance) bool {
 	ifi, err := net.InterfaceByName(name)
 	if err != nil {
@@ -385,9 +346,7 @@ func liveInterfaceMatches(name string, inst amneziawg.Instance) bool {
 	return addressesSatisfied(inst.Address, live)
 }
 
-// addressesSatisfied reports whether every wanted address is present on the
-// interface. A subset check, not equality: the kernel adds an IPv6 link-local
-// address of its own that no config ever asks for.
+// addressesSatisfied reports whether every wanted address is present on the interface.
 func addressesSatisfied(wanted, live []string) bool {
 	if len(wanted) == 0 {
 		return false
@@ -414,11 +373,11 @@ func normalizeCIDR(s string) string {
 	return p.String()
 }
 
-func teardown(name string) error {
-	if !linkExists(name) {
+func (m *Manager) teardown(name string) error {
+	if !m.linkExists(name) {
 		return nil
 	}
-	if out, err := run("awg-quick", "down", name); err != nil {
+	if out, err := m.run("awg-quick", "down", name); err != nil {
 		return fmt.Errorf("amneziawgkern: awg-quick down %s: %w (%s)", name, err, out)
 	}
 	return nil

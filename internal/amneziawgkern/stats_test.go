@@ -88,9 +88,8 @@ func TestDeltaSkipsIdlePeers(t *testing.T) {
 	}
 }
 
-// TestDeltaSurvivesInterfaceRebuild is the reset case: awg-quick down/up zeroes
-// the kernel counters, and a naive subtraction would go negative and either
-// wrap or silently credit the client back their whole history.
+// TestDeltaSurvivesInterfaceRebuild is the reset case: awg-quick down/up zeroes the kernel counters,
+// and a naive subtraction would go negative and either wrap or silently credit the client back their
 func TestDeltaSurvivesInterfaceRebuild(t *testing.T) {
 	t.Parallel()
 
@@ -128,17 +127,16 @@ func TestForgetDropsInterfaceState(t *testing.T) {
 	}
 }
 
-// TestEndpointRoamingIgnoresPortChanges: a peer behind NAT gets a new source
-// port on every rekey, and counting those as new locations would ban every
-// client with a limit of 1.
+// TestEndpointRoamingIgnoresPortChanges: a peer behind NAT gets a new source port on every rekey, and
+// counting those as new locations would ban every client with a limit of 1.
 func TestEndpointRoamingIgnoresPortChanges(t *testing.T) {
 	t.Parallel()
 
 	c := NewCollector()
-	now := time.Now()
+	now := time.Unix(1_800_000_000, 0)
 	window := time.Hour
-	c.ObserveEndpoints("awg1", []PeerStat{{PublicKey: "p", Endpoint: "203.0.113.7:51820"}}, now, window)
-	c.ObserveEndpoints("awg1", []PeerStat{{PublicKey: "p", Endpoint: "203.0.113.7:40001"}}, now.Add(time.Minute), window)
+	c.ObserveEndpoints("awg1", []PeerStat{{PublicKey: "p", Endpoint: "203.0.113.7:51820", LatestHandshake: now.Unix()}}, now, window)
+	c.ObserveEndpoints("awg1", []PeerStat{{PublicKey: "p", Endpoint: "203.0.113.7:40001", LatestHandshake: now.Unix()}}, now.Add(time.Minute), window)
 
 	if got := c.DistinctEndpoints("awg1", "p"); got != 1 {
 		t.Errorf("same address on a new port = %d distinct endpoints, want 1", got)
@@ -149,10 +147,10 @@ func TestEndpointRoamingCountsDistinctAddresses(t *testing.T) {
 	t.Parallel()
 
 	c := NewCollector()
-	now := time.Now()
+	now := time.Unix(1_800_000_000, 0)
 	window := time.Hour
-	c.ObserveEndpoints("awg1", []PeerStat{{PublicKey: "p", Endpoint: "203.0.113.7:51820"}}, now, window)
-	c.ObserveEndpoints("awg1", []PeerStat{{PublicKey: "p", Endpoint: "198.51.100.4:51820"}}, now.Add(time.Minute), window)
+	c.ObserveEndpoints("awg1", []PeerStat{{PublicKey: "p", Endpoint: "203.0.113.7:51820", LatestHandshake: now.Unix()}}, now, window)
+	c.ObserveEndpoints("awg1", []PeerStat{{PublicKey: "p", Endpoint: "198.51.100.4:51820", LatestHandshake: now.Add(time.Minute).Unix()}}, now.Add(time.Minute), window)
 
 	if got := c.DistinctEndpoints("awg1", "p"); got != 2 {
 		t.Errorf("two locations = %d distinct endpoints, want 2", got)
@@ -165,17 +163,45 @@ func TestEndpointRoamingExpires(t *testing.T) {
 	t.Parallel()
 
 	c := NewCollector()
-	now := time.Now()
+	now := time.Unix(1_800_000_000, 0)
 	window := 10 * time.Minute
-	c.ObserveEndpoints("awg1", []PeerStat{{PublicKey: "p", Endpoint: "203.0.113.7:51820"}}, now, window)
-	c.ObserveEndpoints("awg1", []PeerStat{{PublicKey: "p", Endpoint: "198.51.100.4:51820"}}, now.Add(time.Hour), window)
+	c.ObserveEndpoints("awg1", []PeerStat{{PublicKey: "p", Endpoint: "203.0.113.7:51820", LatestHandshake: now.Unix()}}, now, window)
+	c.ObserveEndpoints("awg1", []PeerStat{{PublicKey: "p", Endpoint: "198.51.100.4:51820", LatestHandshake: now.Add(time.Hour).Unix()}}, now.Add(time.Hour), window)
 
 	if got := c.DistinctEndpoints("awg1", "p"); got != 1 {
 		t.Errorf("the stale sighting should have aged out, got %d", got)
 	}
 }
 
-// TestEndpointRoamingSkipsNeverConnected: "(none)" is not a location.
+func TestEndpointRoamingExpiresIdleEndpointAndKeepsActiveInterfaces(t *testing.T) {
+	t.Parallel()
+
+	c := NewCollector()
+	start := time.Unix(1_800_000_000, 0)
+	window := 30 * time.Minute
+	c.ObserveEndpoints("awg1", []PeerStat{{PublicKey: "idle", Endpoint: "203.0.113.7:51820", LatestHandshake: start.Unix()}}, start, window)
+	c.ObserveEndpoints("awg1", []PeerStat{{PublicKey: "roaming", Endpoint: "198.51.100.1:51820", LatestHandshake: start.Unix()}}, start, window)
+	c.ObserveEndpoints("awg2", []PeerStat{{PublicKey: "other", Endpoint: "192.0.2.9:51820", LatestHandshake: start.Unix()}}, start, window)
+
+	later := start.Add(31 * time.Minute)
+	c.ObserveEndpoints("awg1", []PeerStat{
+		{PublicKey: "idle", Endpoint: "203.0.113.7:51820", LatestHandshake: start.Unix()},
+		{PublicKey: "roaming", Endpoint: "198.51.100.2:51820", LatestHandshake: later.Unix()},
+	}, later, window)
+	c.ObserveEndpoints("awg2", []PeerStat{{PublicKey: "other", Endpoint: "192.0.2.9:51820", LatestHandshake: later.Unix()}}, later, window)
+
+	if got := c.EndpointsFor("awg1", "idle"); len(got) != 0 {
+		t.Fatalf("idle peer endpoint remained visible after its handshake aged out: %v", got)
+	}
+	if got := c.EndpointsFor("awg1", "roaming"); len(got) != 1 || got[0] != "198.51.100.2" {
+		t.Fatalf("active roaming peer endpoints = %v, want only current address", got)
+	}
+	if got := c.EndpointsFor("awg2", "other"); len(got) != 1 || got[0] != "192.0.2.9" {
+		t.Fatalf("active peer on another interface was lost: %v", got)
+	}
+}
+
+// A peer that never completed a handshake has no observed location.
 func TestEndpointRoamingSkipsNeverConnected(t *testing.T) {
 	t.Parallel()
 
@@ -203,9 +229,8 @@ func TestEndpointHostHandlesIPv6(t *testing.T) {
 	}
 }
 
-// TestOnlineEmailsUsesHandshakeFreshness: kernel-mode peers are invisible to
-// Xray's online-users API, so a stale handshake is the only thing separating a
-// connected client from one whose laptop is shut.
+// TestOnlineEmailsUsesHandshakeFreshness: kernel-mode peers are invisible to Xray's online-users API,
+// so a stale handshake is the only thing separating a connected client from one whose laptop is shut.
 func TestOnlineEmailsUsesHandshakeFreshness(t *testing.T) {
 	t.Parallel()
 
@@ -252,5 +277,36 @@ func TestOnlineEmailsDedupesPeersOfOneClient(t *testing.T) {
 
 	if got := c.OnlineEmails(now); len(got) != 1 {
 		t.Errorf("OnlineEmails = %v, want one entry", got)
+	}
+}
+
+func TestSetEmailsPrunesRemovedPeerStateWithoutAffectingOtherInterfaces(t *testing.T) {
+	c := NewCollector()
+	now := time.Unix(1_800_000_000, 0)
+	c.Delta("awg1", []PeerStat{{PublicKey: "removed", RxBytes: 10, TxBytes: 20}})
+	c.ObserveEndpoints("awg1", []PeerStat{{PublicKey: "removed", Endpoint: "203.0.113.4:1234", LatestHandshake: now.Unix()}}, now, time.Hour)
+	c.ObserveHandshakes("awg1", []PeerStat{{PublicKey: "removed", LatestHandshake: now.Unix()}})
+	c.SetEmails("awg1", map[string]string{"removed": "old@example.test"})
+
+	c.Delta("awg2", []PeerStat{{PublicKey: "kept", RxBytes: 30, TxBytes: 40}})
+	c.ObserveEndpoints("awg2", []PeerStat{{PublicKey: "kept", Endpoint: "203.0.113.5:1234", LatestHandshake: now.Unix()}}, now, time.Hour)
+	c.ObserveHandshakes("awg2", []PeerStat{{PublicKey: "kept", LatestHandshake: now.Unix()}})
+	c.SetEmails("awg2", map[string]string{"kept": "kept@example.test"})
+
+	c.SetEmails("awg1", map[string]string{})
+	if got := c.ClientIPs(); len(got) != 1 || len(got["old@example.test"]) != 0 {
+		t.Fatalf("removed peer endpoint remained visible: %+v", got)
+	}
+	if got := c.OnlineEmails(now); len(got) != 1 || got[0] != "kept@example.test" {
+		t.Fatalf("removed peer remained online or other interface was lost: %v", got)
+	}
+	if got := c.DistinctEndpoints("awg1", "removed"); got != 0 {
+		t.Fatalf("removed peer endpoint count = %d, want 0", got)
+	}
+	if got := c.Delta("awg1", []PeerStat{{PublicKey: "removed", RxBytes: 15, TxBytes: 25}}); len(got) != 1 || got[0].Up != 15 || got[0].Down != 25 {
+		t.Fatalf("re-added peer did not start a fresh counter baseline: %+v", got)
+	}
+	if got := c.DistinctEndpoints("awg2", "kept"); got != 1 {
+		t.Fatalf("other interface endpoint count = %d, want 1", got)
 	}
 }

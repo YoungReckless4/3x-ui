@@ -305,7 +305,7 @@ func (s *InboundService) normalizeAmneziaWGSettings(inbound *model.Inbound, oldS
 
 	// Refuse a kernel-mode save this host cannot honour while the admin is still
 	// in front of the form; the reconcile job could only log and retry.
-	if parsed.Server.KernelMode {
+	if parsed.Server.KernelMode && inbound.NodeID == nil {
 		inst, ok := amneziawg.InstanceFromInbound(inbound)
 		if !ok {
 			inst = amneziawg.Instance{

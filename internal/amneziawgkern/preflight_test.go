@@ -7,9 +7,8 @@ import (
 	"time"
 )
 
-// TestHostReadinessCarriesMachineCodes: the UI translates off the code, so a
-// blocker that only carried prose would force the panel to render an English
-// string straight from the server.
+// TestHostReadinessCarriesMachineCodes: the UI translates off the code, so a blocker that only carried
+// prose would force the panel to render an English string straight from the server.
 func TestHostReadinessCarriesMachineCodes(t *testing.T) {
 	resetReadinessCache()
 	r := HostReadiness()

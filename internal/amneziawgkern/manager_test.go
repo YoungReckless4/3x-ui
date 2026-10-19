@@ -10,9 +10,8 @@ import (
 	"github.com/mhsanaei/3x-ui/v3/internal/amneziawg"
 )
 
-// TestStructuralFingerprintIgnoresPeers is what keeps live sessions alive: if
-// adding a client changed the fingerprint, every admin edit would take the
-// interface down and back up and reset every peer's handshake.
+// TestStructuralFingerprintIgnoresPeers is what keeps live sessions alive: if adding a client changed
+// the fingerprint, every admin edit would take the interface down and back up and reset every peer's
 func TestStructuralFingerprintIgnoresPeers(t *testing.T) {
 	t.Parallel()
 
@@ -113,9 +112,8 @@ func TestEnsureAdoptionPreservesTrafficBaselineUntilDump(t *testing.T) {
 	}
 }
 
-// TestStructuralFingerprintCatchesInterfaceChanges: these are the properties
-// the kernel fixes when the interface is created, so missing one here would
-// leave the live interface permanently out of sync with its config.
+// TestStructuralFingerprintCatchesInterfaceChanges: these are the properties the kernel fixes when the
+// interface is created, so missing one here would leave the live interface permanently out of sync
 func TestStructuralFingerprintCatchesInterfaceChanges(t *testing.T) {
 	t.Parallel()
 
@@ -147,9 +145,8 @@ func TestStructuralFingerprintCatchesInterfaceChanges(t *testing.T) {
 	}
 }
 
-// TestStructuralFingerprintCatchesEgressInterface: the NAT block lives in the
-// interface section, and a masquerade pointing at the wrong NIC black-holes
-// every peer.
+// TestStructuralFingerprintCatchesEgressInterface: the NAT block lives in the interface section, and a
+// masquerade pointing at the wrong NIC black-holes every peer.
 func TestStructuralFingerprintCatchesEgressInterface(t *testing.T) {
 	t.Parallel()
 
@@ -230,9 +227,8 @@ func TestWriteConfIsPrivateAndComplete(t *testing.T) {
 	}
 }
 
-// TestAddressesSatisfiedIsASubsetCheck: the kernel adds an IPv6 link-local
-// address nobody configured, so requiring an exact match would make every
-// interface look wrong and force a needless rebuild on every panel restart.
+// TestAddressesSatisfiedIsASubsetCheck: the kernel adds an IPv6 link-local address nobody configured,
+// so requiring an exact match would make every interface look wrong and force a needless rebuild on
 func TestAddressesSatisfiedIsASubsetCheck(t *testing.T) {
 	t.Parallel()
 
@@ -261,10 +257,8 @@ func TestLiveInterfaceMatchesRejectsMissingLink(t *testing.T) {
 	}
 }
 
-// TestStopAllLeavesInterfacesRunning: the kernel datapath keeps forwarding
-// while the panel is down, so shutdown must only drop bookkeeping. Tearing the
-// tunnel down here would disconnect every user for the length of an upgrade
-// and leave the idle ones off afterwards.
+// TestStopAllLeavesInterfacesRunning: the kernel datapath keeps forwarding while the panel is down, so
+// shutdown must only drop bookkeeping.
 func TestStopAllLeavesInterfacesRunning(t *testing.T) {
 	m := &Manager{ifaces: map[int]*managed{
 		1: {name: "awg-test-never-created", conf: "x", structFP: "y"},
@@ -275,6 +269,67 @@ func TestStopAllLeavesInterfacesRunning(t *testing.T) {
 	if m.HasRunning() {
 		t.Error("StopAll must clear the manager's bookkeeping")
 	}
-	// teardown() would have run awg-quick against a nonexistent link; the point
-	// of the assertion above is that the map is cleared without touching it.
+	// Clearing bookkeeping must not issue commands during process shutdown.
+}
+
+func TestRemoveRetainsManagedInterfaceAfterTeardownFailure(t *testing.T) {
+	calls := 0
+	m := &Manager{
+		ifaces: map[int]*managed{7: {name: "awg-remove-retry"}},
+		ops: managerOps{
+			linkExists: func(string) bool { return true },
+			run: func(name string, args ...string) (string, error) {
+				calls++
+				if calls == 1 {
+					return "temporary failure", os.ErrProcessDone
+				}
+				return "", nil
+			},
+		},
+	}
+
+	if err := m.Remove(7); err == nil {
+		t.Fatal("Remove must report a failed awg-quick down")
+	}
+	if !m.Running(7) {
+		t.Fatal("failed teardown must remain managed so the next reconcile can retry")
+	}
+	if err := m.Remove(7); err != nil {
+		t.Fatalf("Remove retry: %v", err)
+	}
+	if m.Running(7) {
+		t.Fatal("successful retry must forget the interface")
+	}
+	if calls != 2 {
+		t.Fatalf("teardown attempts = %d, want 2", calls)
+	}
+}
+
+func TestReconcileRetriesRemovedInterfaceAfterTeardownFailure(t *testing.T) {
+	calls := 0
+	m := &Manager{
+		ifaces: map[int]*managed{8: {name: "awg-reconcile-retry"}},
+		ops: managerOps{
+			linkExists: func(string) bool { return true },
+			run: func(name string, args ...string) (string, error) {
+				calls++
+				if calls == 1 {
+					return "temporary failure", os.ErrProcessDone
+				}
+				return "", nil
+			},
+		},
+	}
+
+	m.Reconcile(nil)
+	if !m.Running(8) {
+		t.Fatal("failed reconcile teardown must remain managed for retry")
+	}
+	m.Reconcile(nil)
+	if m.Running(8) {
+		t.Fatal("successful reconcile retry must forget the interface")
+	}
+	if calls != 2 {
+		t.Fatalf("teardown attempts = %d, want 2", calls)
+	}
 }
